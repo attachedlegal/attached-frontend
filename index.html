@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATTACHED — FL-142 Schedule of Assets & Debts</title>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', sans-serif; background: #faf9f7; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    // ============================================
+    // ATTACHED - FL-142 Schedule Generator
+    // PRODUCTION VERSION - Uses backend proxy
+    // ============================================
+    
+    // CONFIGURATION - Change this to your deployed backend URL
+    const API_BASE_URL = window.location.hostname === 'localhost' 
+      ? 'http://localhost:3001' 
+      : 'https://attached-backend.vercel.app'; // <-- CHANGE THIS
+    
+    const { useState, useCallback } = React;
+
+    const ASSET_CATEGORIES = [
+      { id: 1, name: "Real Estate", hint: "See Attached", fl142Ref: "Give street addresses and attach copies of deeds with legal descriptions and latest lender's statement" },
+      { id: 2, name: "Household Furniture, Furnishings, Appliances", hint: "See Attached", fl142Ref: "Identify" },
+      { id: 3, name: "Jewelry, Antiques, Art, Coin Collections, etc.", hint: "See Attached", fl142Ref: "Identify" },
+      { id: 4, name: "Vehicles, Boats, Trailers", hint: "See Attached", fl142Ref: "Describe and attach copy of title document" },
+      { id: 5, name: "Savings Accounts", hint: "See Attached", fl142Ref: "Account name, account number, bank, and branch. Attach copy of latest statement" },
+      { id: 6, name: "Checking Accounts", hint: "See Attached", fl142Ref: "Account name and number, bank, and branch. Attach copy of latest statement" },
+      { id: 7, name: "Credit Union, Other Deposit Accounts", hint: "See Attached", fl142Ref: "Account name and number, bank, and branch. Attach copy of latest statement" },
+      { id: 8, name: "Cash", hint: "See Attached", fl142Ref: "Give location" },
+      { id: 9, name: "Tax Refund", hint: "See Attached", fl142Ref: "" },
+      { id: 10, name: "Life Insurance with Cash Surrender or Loan Value", hint: "See Attached", fl142Ref: "Attach copy of declaration page for each policy" },
+      { id: 11, name: "Stocks, Bonds, Secured Notes, Mutual Funds", hint: "See Attached", fl142Ref: "Give certificate number and attach copy of the certificate or copy of latest statement" },
+      { id: 12, name: "Retirement and Pensions", hint: "See Attached", fl142Ref: "Attach copy of latest summary plan documents and latest benefit statement" },
+      { id: 13, name: "Profit-Sharing, Annuities, IRAs, Deferred Compensation", hint: "See Attached", fl142Ref: "Attach copy of latest statement" },
+      { id: 14, name: "Accounts Receivable and Unsecured Notes", hint: "See Attached", fl142Ref: "Attach copy of each" },
+      { id: 15, name: "Partnerships and Other Business Interests", hint: "See Attached", fl142Ref: "Attach copy of most current K-1 form and Schedule C" },
+      { id: 16, name: "Other Assets", hint: "See Attached", fl142Ref: "" },
+    ];
+
+    const DEBT_CATEGORIES = [
+      { id: 19, name: "Student Loans", hint: "See Attached", fl142Ref: "Give details" },
+      { id: 20, name: "Taxes", hint: "See Attached", fl142Ref: "Give details" },
+      { id: 21, name: "Support Arrearages", hint: "See Attached", fl142Ref: "Attach copies of orders and statements" },
+      { id: 22, name: "Loans—Unsecured", hint: "See Attached", fl142Ref: "Give bank name and loan number and attach copy of latest statement" },
+      { id: 23, name: "Credit Cards", hint: "See Attached", fl142Ref: "Give creditor's name and address and the account number. Attach copy of latest statement" },
+      { id: 24, name: "Other Debts", hint: "See Attached", fl142Ref: "Specify" },
+    ];
+
+    function App() {
+      const [currentView, setCurrentView] = useState('landing');
+      const [step, setStep] = useState(1);
+      const [caseInfo, setCaseInfo] = useState({
+        petitioner: '', respondent: '', caseNumber: '', county: '',
+        filingParty: 'petitioner', attorneyName: '', attorneyAddress: '', attorneyPhone: '',
+      });
+      const [assets, setAssets] = useState([]);
+      const [debts, setDebts] = useState([]);
+      const [uploadedFiles, setUploadedFiles] = useState([]);
+      const [extracting, setExtracting] = useState(false);
+      const [extractionLog, setExtractionLog] = useState([]);
+
+      const totalAssetsFMV = assets.reduce((sum, a) => sum + (parseFloat(a.fairMarketValue) || 0), 0);
+      const totalAssetsOwed = assets.reduce((sum, a) => sum + (parseFloat(a.amountOwed) || 0), 0);
+      const totalDebts = debts.reduce((sum, d) => sum + (parseFloat(d.totalOwing) || 0), 0);
+      const netWorth = totalAssetsFMV - totalAssetsOwed - totalDebts;
+
+      const handleFileUpload = useCallback((e) => {
+        const files = Array.from(e.target.files);
+        setUploadedFiles(prev => [...prev, ...files.map(f => ({ file: f, status: 'pending', extracted: null }))]);
+      }, []);
+
+      // Extract using BACKEND PROXY (not direct API call)
+      const extractFromDocuments = async () => {
+        setExtracting(true);
+        setExtractionLog(['🚀 Starting extraction...']);
+        
+        const pendingFiles = uploadedFiles.filter(f => f.status === 'pending');
+        
+        for (const fileObj of pendingFiles) {
+          setExtractionLog(prev => [...prev, `📄 Processing: ${fileObj.file.name}`]);
+          
+          try {
+            const base64 = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result.split(',')[1]);
+              reader.onerror = () => reject(new Error('Failed to read file'));
+              reader.readAsDataURL(fileObj.file);
+            });
+            
+            const isPDF = fileObj.file.type === 'application/pdf';
+            const contentBlock = isPDF 
+              ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+              : { type: "image", source: { type: "base64", media_type: fileObj.file.type, data: base64 } };
+            
+            setExtractionLog(prev => [...prev, `🔍 Analyzing with Claude AI...`]);
+            
+            // Call YOUR backend proxy instead of Claude directly
+            const response = await fetch(`${API_BASE_URL}/api/extract`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: "claude-sonnet-4-20250514",
+                max_tokens: 4000,
+                messages: [{
+                  role: "user",
+                  content: [
+                    contentBlock,
+                    {
+                      type: "text",
+                      text: `Extract financial data from this document for a California FL-142 Schedule of Assets and Debts.
+
+Return ONLY a valid JSON object:
+{
+  "documentType": "bank_statement|brokerage|retirement|credit_card|loan|other",
+  "institution": "name",
+  "accountType": "checking|savings|investment|retirement|credit|loan",
+  "accountNumber": "last 4 or full",
+  "accountHolder": "name",
+  "statementDate": "YYYY-MM-DD or null",
+  "currentBalance": 0.00,
+  "amountOwed": null,
+  "additionalDetails": "other info"
+}
+
+Return ONLY the JSON.`
+                    }
+                  ]
+                }]
+              })
+            });
+            
+            if (!response.ok) throw new Error(`API error ${response.status}`);
+            
+            const data = await response.json();
+            let text = data.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const extracted = JSON.parse(text);
+            
+            setUploadedFiles(prev => prev.map(f => 
+              f.file.name === fileObj.file.name ? { ...f, status: 'extracted', extracted } : f
+            ));
+            
+            autoCategorizeFinding(extracted, fileObj.file.name);
+            setExtractionLog(prev => [...prev, `✅ ${extracted.institution} - $${extracted.currentBalance?.toLocaleString() || extracted.amountOwed?.toLocaleString() || '0'}`]);
+            
+          } catch (error) {
+            setExtractionLog(prev => [...prev, `❌ Error: ${error.message}`]);
+            setUploadedFiles(prev => prev.map(f => 
+              f.file.name === fileObj.file.name ? { ...f, status: 'error' } : f
+            ));
+          }
+        }
+        
+        setExtracting(false);
+        setExtractionLog(prev => [...prev, '✨ Extraction complete!']);
+      };
+
+      const autoCategorizeFinding = (extracted, fileName) => {
+        const { accountType, institution, accountNumber, currentBalance, amountOwed } = extracted;
+        let categoryId;
+        let isDebt = false;
+        const type = (accountType || '').toLowerCase();
+        
+        if (type.includes('check')) categoryId = 6;
+        else if (type.includes('saving')) categoryId = 5;
+        else if (type.includes('invest') || type.includes('brokerage')) categoryId = 11;
+        else if (type.includes('retire') || type.includes('401') || type.includes('ira')) categoryId = 13;
+        else if (type.includes('credit')) { categoryId = 23; isDebt = true; }
+        else if (type.includes('loan')) { categoryId = 22; isDebt = true; }
+        else categoryId = isDebt ? 24 : 16;
+        
+        const newItem = {
+          id: Date.now() + Math.random(),
+          categoryId,
+          description: `${institution || 'Unknown'} - ${accountType || 'Account'}${accountNumber ? ` (...${String(accountNumber).slice(-4)})` : ''}`,
+          separateProperty: '',
+          dateAcquired: '',
+          fairMarketValue: currentBalance || 0,
+          amountOwed: amountOwed || 0,
+          totalOwing: amountOwed || 0,
+          sourceFile: fileName,
+        };
+        
+        if (isDebt) setDebts(prev => [...prev, newItem]);
+        else setAssets(prev => [...prev, newItem]);
+      };
+
+      const addAsset = (categoryId) => setAssets(prev => [...prev, { id: Date.now(), categoryId, description: '', separateProperty: '', dateAcquired: '', fairMarketValue: 0, amountOwed: 0 }]);
+      const addDebt = (categoryId) => setDebts(prev => [...prev, { id: Date.now(), categoryId, description: '', separateProperty: '', dateAcquired: '', totalOwing: 0 }]);
+      const updateAsset = (id, field, value) => setAssets(prev => prev.map(a => a.id === id ? { ...a, [field]: value } : a));
+      const updateDebt = (id, field, value) => setDebts(prev => prev.map(d => d.id === id ? { ...d, [field]: value } : d));
+      const deleteAsset = (id) => setAssets(prev => prev.filter(a => a.id !== id));
+      const deleteDebt = (id) => setDebts(prev => prev.filter(d => d.id !== id));
+
+      // Format date for display
+      const formatDate = (date) => {
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      };
+
+      const generateAttachment = () => {
+        const groupedAssets = ASSET_CATEGORIES.map(cat => ({ ...cat, items: assets.filter(a => a.categoryId === cat.id) })).filter(cat => cat.items.length > 0);
+        const groupedDebts = DEBT_CATEGORIES.map(cat => ({ ...cat, items: debts.filter(d => d.categoryId === cat.id) })).filter(cat => cat.items.length > 0);
+        const today = formatDate(new Date());
+        const filingPartyName = caseInfo.filingParty === 'petitioner' ? caseInfo.petitioner : caseInfo.respondent;
+
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FL-142 Attachment - ${caseInfo.caseNumber || 'Schedule of Assets and Debts'}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    @page { size: letter; margin: 0.75in; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+    body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.4; color: #000; max-width: 8.5in; margin: 0 auto; padding: 0.5in; }
+    
+    /* Caption - FL-142 Style */
+    .caption { margin-bottom: 24pt; }
+    .caption-top { display: grid; grid-template-columns: 2.5in 1fr; border: 1px solid #000; }
+    .caption-left { padding: 8pt; border-right: 1px solid #000; font-size: 10pt; }
+    .caption-left-label { font-size: 8pt; margin-bottom: 4pt; }
+    .caption-right { display: flex; flex-direction: column; }
+    .caption-court { padding: 8pt; border-bottom: 1px solid #000; text-align: center; font-weight: bold; }
+    .caption-parties { display: grid; grid-template-columns: 1fr auto; }
+    .caption-party-col { padding: 8pt; }
+    .caption-case-col { padding: 8pt; border-left: 1px solid #000; min-width: 1.8in; }
+    .caption-case-label { font-size: 9pt; margin-bottom: 2pt; }
+    .caption-case-number { font-weight: bold; font-size: 11pt; }
+    .caption-title { text-align: center; padding: 8pt; border: 1px solid #000; border-top: none; font-weight: bold; background: #f5f5f5; }
+    .caption-checkbox { margin-top: 4pt; font-size: 10pt; }
+    
+    /* Document Header */
+    .doc-header { text-align: center; margin: 20pt 0; padding-bottom: 12pt; border-bottom: 2pt solid #000; }
+    .doc-header h1 { font-size: 14pt; font-weight: bold; letter-spacing: 1pt; margin-bottom: 4pt; }
+    .doc-header p { font-size: 11pt; }
+    
+    /* Section Dividers */
+    .section-divider { 
+      background: #000; 
+      color: #fff; 
+      padding: 8pt 12pt; 
+      font-weight: bold; 
+      font-size: 11pt; 
+      margin: 20pt 0 12pt 0;
+      letter-spacing: 0.5pt;
+    }
+    
+    /* Category Headers - only show if items exist */
+    .category-divider {
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      border-left: 4pt solid #000;
+      padding: 8pt 12pt;
+      margin: 16pt 0 8pt 0;
+      page-break-inside: avoid;
+    }
+    .category-number { font-weight: bold; }
+    .category-name { font-weight: bold; }
+    .category-ref { font-size: 9pt; font-style: italic; color: #555; margin-top: 2pt; }
+    
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 12pt; font-size: 10pt; }
+    th { background: #e5e5e5; border: 1px solid #000; padding: 6pt 8pt; text-align: left; font-weight: bold; font-size: 9pt; }
+    td { border: 1px solid #000; padding: 6pt 8pt; vertical-align: top; }
+    .col-desc { width: 40%; }
+    .col-sep { width: 8%; text-align: center; }
+    .col-date { width: 15%; }
+    .col-money { width: 18%; text-align: right; font-family: 'Courier New', monospace; }
+    
+    /* Totals */
+    .totals-section { margin-top: 24pt; border: 2pt solid #000; }
+    .totals-row { display: grid; grid-template-columns: 1fr 1fr 1fr; }
+    .totals-box { padding: 12pt; text-align: center; border-right: 1pt solid #000; }
+    .totals-box:last-child { border-right: none; }
+    .totals-label { font-size: 9pt; font-weight: bold; margin-bottom: 4pt; }
+    .totals-value { font-size: 14pt; font-weight: bold; font-family: 'Courier New', monospace; }
+    
+    /* Signature */
+    .declaration { margin-top: 32pt; padding-top: 16pt; border-top: 1pt solid #000; }
+    .declaration-text { font-size: 10pt; margin-bottom: 24pt; }
+    .sig-row { display: flex; justify-content: space-between; margin-top: 32pt; }
+    .sig-field { width: 45%; }
+    .sig-line { border-top: 1pt solid #000; padding-top: 4pt; font-size: 9pt; }
+    .print-name { margin-top: 16pt; }
+    
+    /* Footer */
+    .footer { margin-top: 24pt; padding-top: 12pt; border-top: 1pt solid #ccc; text-align: center; font-size: 8pt; color: #666; }
+  </style>
+</head>
+<body>
+
+<!-- Caption Block - FL-142 Style -->
+<div class="caption">
+  <div class="caption-top">
+    <div class="caption-left">
+      <div class="caption-left-label">ATTORNEY OR PARTY WITHOUT ATTORNEY:</div>
+      <div>${filingPartyName || '________________________________'}</div>
+      <div>${caseInfo.attorneyAddress || '________________________________'}</div>
+      <div>TELEPHONE: ${caseInfo.attorneyPhone || '________________'}</div>
+      <div style="margin-top: 8pt;"><small>ATTORNEY FOR: ${caseInfo.filingParty === 'petitioner' ? 'Petitioner' : 'Respondent'}</small></div>
+    </div>
+    <div class="caption-right">
+      <div class="caption-court">SUPERIOR COURT OF CALIFORNIA, COUNTY OF ${(caseInfo.county || '____________').toUpperCase()}</div>
+      <div class="caption-parties">
+        <div class="caption-party-col">
+          <div>PETITIONER: <strong>${caseInfo.petitioner || '________________________'}</strong></div>
+          <div style="margin-top: 8pt;">RESPONDENT: <strong>${caseInfo.respondent || '________________________'}</strong></div>
+        </div>
+        <div class="caption-case-col">
+          <div class="caption-case-label">CASE NUMBER:</div>
+          <div class="caption-case-number">${caseInfo.caseNumber || '________________________'}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption-title">
+    ATTACHMENT TO SCHEDULE OF ASSETS AND DEBTS (FL-142)
+    <div class="caption-checkbox">☑ ${caseInfo.filingParty === 'petitioner' ? "Petitioner's" : "Respondent's"}</div>
+  </div>
+</div>
+
+<!-- Case Info Summary -->
+<div style="margin-bottom: 16pt; font-size: 10pt;">
+  <strong>Date:</strong> ${today}
+</div>
+
+<!-- ASSETS SECTION -->
+${groupedAssets.length > 0 ? `
+<div class="section-divider">ASSETS</div>
+${groupedAssets.map(cat => `
+<div class="category-divider">
+  <div><span class="category-number">ITEM ${cat.id}.</span> <span class="category-name">${cat.name.toUpperCase()}</span></div>
+  ${cat.fl142Ref ? `<div class="category-ref">(${cat.fl142Ref})</div>` : ''}
+</div>
+<table>
+  <thead>
+    <tr>
+      <th class="col-desc">Description</th>
+      <th class="col-sep">Sep. Prop.</th>
+      <th class="col-date">Date Acquired</th>
+      <th class="col-money">Fair Market Value</th>
+      <th class="col-money">Amount Owed</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${cat.items.map(item => `
+    <tr>
+      <td class="col-desc">${item.description || '—'}</td>
+      <td class="col-sep">${item.separateProperty || '—'}</td>
+      <td class="col-date">${item.dateAcquired || '—'}</td>
+      <td class="col-money">$${parseFloat(item.fairMarketValue || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+      <td class="col-money">$${parseFloat(item.amountOwed || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+    </tr>
+    `).join('')}
+  </tbody>
+</table>
+`).join('')}
+` : '<p style="margin: 16pt 0; font-style: italic;">No assets to report.</p>'}
+
+<!-- DEBTS SECTION -->
+${groupedDebts.length > 0 ? `
+<div class="section-divider">DEBTS</div>
+${groupedDebts.map(cat => `
+<div class="category-divider">
+  <div><span class="category-number">ITEM ${cat.id}.</span> <span class="category-name">${cat.name.toUpperCase()}</span></div>
+  ${cat.fl142Ref ? `<div class="category-ref">(${cat.fl142Ref})</div>` : ''}
+</div>
+<table>
+  <thead>
+    <tr>
+      <th class="col-desc">Creditor / Description</th>
+      <th class="col-sep">Sep. Prop.</th>
+      <th class="col-date">Date Incurred</th>
+      <th class="col-money">Total Owing</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${cat.items.map(item => `
+    <tr>
+      <td class="col-desc">${item.description || '—'}</td>
+      <td class="col-sep">${item.separateProperty || '—'}</td>
+      <td class="col-date">${item.dateAcquired || '—'}</td>
+      <td class="col-money">$${parseFloat(item.totalOwing || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+    </tr>
+    `).join('')}
+  </tbody>
+</table>
+`).join('')}
+` : '<p style="margin: 16pt 0; font-style: italic;">No debts to report.</p>'}
+
+<!-- TOTALS -->
+<div class="totals-section">
+  <div class="totals-row">
+    <div class="totals-box">
+      <div class="totals-label">TOTAL ASSETS (FMV)</div>
+      <div class="totals-value">$${totalAssetsFMV.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+    </div>
+    <div class="totals-box">
+      <div class="totals-label">TOTAL DEBTS</div>
+      <div class="totals-value">$${totalDebts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+    </div>
+    <div class="totals-box">
+      <div class="totals-label">NET WORTH</div>
+      <div class="totals-value">$${netWorth.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Declaration & Signature -->
+<div class="declaration">
+  <p class="declaration-text">I declare under penalty of perjury under the laws of the State of California that the foregoing is true and correct.</p>
+  <div class="sig-row">
+    <div class="sig-field">
+      <div class="sig-line">Date</div>
+    </div>
+    <div class="sig-field">
+      <div class="sig-line">Signature of Declarant</div>
+    </div>
+  </div>
+  <div class="print-name">
+    <div class="sig-field">
+      <div class="sig-line">Print Name: ${filingPartyName || ''}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <p>Attachment to FL-142 Schedule of Assets and Debts</p>
+  <p>Family Code §§ 2100–2113 | Code of Civil Procedure §§ 2030.010–2030.310</p>
+  <p style="margin-top: 8pt;">Generated by ATTACHED • attached.legal</p>
+</div>
+
+</body>
+</html>`;
+
+        const win = window.open('', '_blank');
+        win.document.write(html);
+        win.document.close();
+        setTimeout(() => win.print(), 500);
+      };
+
+      // Styles
+      const s = {
+        landing: { minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a, #1e293b)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white', textAlign: 'center', padding: '40px' },
+        nav: { background: '#0f172a', padding: '12px 20px', position: 'sticky', top: 0, zIndex: 100 },
+        navInner: { maxWidth: '900px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+        main: { maxWidth: '900px', margin: '0 auto', padding: '20px' },
+        card: { background: 'white', borderRadius: '10px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: '16px' },
+        btn: { padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' },
+        btnGold: { padding: '14px 40px', background: '#d4a853', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '16px' },
+        input: { width: '100%', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '14px' },
+        label: { display: 'block', fontSize: '12px', fontWeight: '600', color: '#334155', marginBottom: '4px' },
+        catCard: { background: 'white', borderRadius: '10px', marginBottom: '10px', overflow: 'hidden' },
+        catHeader: { display: 'flex', justifyContent: 'space-between', padding: '12px 16px', borderLeft: '3px solid #d4a853', background: 'linear-gradient(90deg, rgba(212,168,83,0.08), transparent)', cursor: 'pointer' },
+        row: { display: 'flex', gap: '10px', padding: '8px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' },
+        rowInput: { padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '12px' },
+        delBtn: { background: '#fef2f2', border: 'none', borderRadius: '4px', color: '#ef4444', width: '28px', height: '28px', cursor: 'pointer' },
+        upload: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '40px', textAlign: 'center', cursor: 'pointer', background: '#f8fafc' },
+        log: { marginTop: '16px', padding: '14px', background: '#0f172a', borderRadius: '8px', fontFamily: 'monospace', fontSize: '11px', color: '#a5f3fc', maxHeight: '180px', overflow: 'auto' },
+      };
+
+      if (currentView === 'landing') {
+        return (
+          <div style={s.landing}>
+            <div style={{ fontSize: '56px' }}>📎</div>
+            <h1 style={{ fontSize: '56px', fontWeight: '700', letterSpacing: '6px', marginTop: '16px' }}>ATTACHED</h1>
+            <p style={{ opacity: 0.8, marginBottom: '40px' }}>FL-142 Schedule of Assets & Debts Generator</p>
+            <div style={{ display: 'flex', gap: '20px', marginBottom: '40px' }}>
+              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
+                <div style={{ fontSize: '28px' }}>📄</div><p style={{ marginTop: '8px' }}>Upload Statements</p>
+              </div>
+              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
+                <div style={{ fontSize: '28px' }}>🤖</div><p style={{ marginTop: '8px' }}>AI Extraction</p>
+              </div>
+              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
+                <div style={{ fontSize: '28px' }}>📋</div><p style={{ marginTop: '8px' }}>Court-Ready PDF</p>
+              </div>
+            </div>
+            <button style={s.btnGold} onClick={() => setCurrentView('app')}>Get Started →</button>
+            <p style={{ marginTop: '24px', fontSize: '11px', opacity: 0.5 }}>California Family Law • Patent Pending</p>
+          </div>
+        );
+      }
+
+      return (
+        <div style={{ minHeight: '100vh', background: '#faf9f7' }}>
+          <nav style={s.nav}>
+            <div style={s.navInner}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setCurrentView('landing')}>
+                <span style={{ fontSize: '20px' }}>📎</span>
+                <span style={{ color: 'white', fontWeight: '700', letterSpacing: '2px' }}>ATTACHED</span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {['Case', 'Docs', 'Assets', 'Debts', 'Generate'].map((l, i) => (
+                  <button key={i} onClick={() => setStep(i+1)} style={{
+                    padding: '6px 12px', borderRadius: '16px', border: 'none', fontSize: '12px', cursor: 'pointer',
+                    background: step === i+1 ? '#d4a853' : step > i+1 ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)',
+                    color: step === i+1 ? '#0f172a' : step > i+1 ? '#22c55e' : 'rgba(255,255,255,0.6)',
+                  }}>{step > i+1 ? '✓' : l}</button>
+                ))}
+              </div>
+            </div>
+          </nav>
+
+          <main style={s.main}>
+            {/* Summary */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', padding: '12px', background: 'white', borderRadius: '10px', marginBottom: '20px' }}>
+              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Assets</small><div style={{ fontWeight: '700', fontSize: '18px' }}>${totalAssetsFMV.toLocaleString()}</div></div>
+              <div style={{ width: '1px', background: '#e2e8f0' }} />
+              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Debts</small><div style={{ fontWeight: '700', fontSize: '18px' }}>${totalDebts.toLocaleString()}</div></div>
+              <div style={{ width: '1px', background: '#e2e8f0' }} />
+              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Net</small><div style={{ fontWeight: '700', fontSize: '18px', color: netWorth < 0 ? '#ef4444' : '#22c55e' }}>${netWorth.toLocaleString()}</div></div>
+            </div>
+
+            {/* Step 1 */}
+            {step === 1 && (
+              <div style={s.card}>
+                <h2 style={{ marginBottom: '16px' }}>Case Information</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div><label style={s.label}>Petitioner Name</label><input style={s.input} value={caseInfo.petitioner} onChange={e => setCaseInfo({...caseInfo, petitioner: e.target.value})} placeholder="Full legal name" /></div>
+                  <div><label style={s.label}>Respondent Name</label><input style={s.input} value={caseInfo.respondent} onChange={e => setCaseInfo({...caseInfo, respondent: e.target.value})} placeholder="Full legal name" /></div>
+                  <div><label style={s.label}>Case Number</label><input style={s.input} value={caseInfo.caseNumber} onChange={e => setCaseInfo({...caseInfo, caseNumber: e.target.value})} placeholder="e.g., BFL-00001" /></div>
+                  <div><label style={s.label}>County</label><input style={s.input} value={caseInfo.county} onChange={e => setCaseInfo({...caseInfo, county: e.target.value})} placeholder="e.g., Kern" /></div>
+                  <div><label style={s.label}>Filing Party</label>
+                    <select style={s.input} value={caseInfo.filingParty} onChange={e => setCaseInfo({...caseInfo, filingParty: e.target.value})}>
+                      <option value="petitioner">Petitioner</option>
+                      <option value="respondent">Respondent</option>
+                    </select>
+                  </div>
+                  <div><label style={s.label}>Phone Number</label><input style={s.input} value={caseInfo.attorneyPhone} onChange={e => setCaseInfo({...caseInfo, attorneyPhone: e.target.value})} placeholder="(xxx) xxx-xxxx" /></div>
+                </div>
+                <div style={{ marginTop: '20px', textAlign: 'right' }}><button style={s.btn} onClick={() => setStep(2)}>Continue →</button></div>
+              </div>
+            )}
+
+            {/* Step 2 */}
+            {step === 2 && (
+              <div style={s.card}>
+                <h2 style={{ marginBottom: '16px' }}>Upload Documents</h2>
+                <label style={s.upload}>
+                  <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg" onChange={handleFileUpload} style={{ display: 'none' }} />
+                  <div style={{ fontSize: '40px' }}>📁</div>
+                  <p>Drop files or click to upload</p>
+                  <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Bank statements, brokerage statements, credit card statements</p>
+                </label>
+                {uploadedFiles.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    {uploadedFiles.map((f, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: f.status === 'extracted' ? '#f0fdf4' : '#f8fafc', borderRadius: '6px', marginBottom: '6px' }}>
+                        <span>{f.status === 'extracted' ? '✅' : f.status === 'error' ? '❌' : '📄'} {f.file.name}</span>
+                        <span style={{ fontSize: '11px', padding: '2px 8px', background: f.status === 'extracted' ? '#22c55e' : '#64748b', color: 'white', borderRadius: '10px' }}>{f.status}</span>
+                      </div>
+                    ))}
+                    {uploadedFiles.some(f => f.status === 'pending') && (
+                      <button style={{ ...s.btn, width: '100%', marginTop: '10px' }} onClick={extractFromDocuments} disabled={extracting}>
+                        {extracting ? '⏳ Extracting...' : '🔍 Extract with AI'}
+                      </button>
+                    )}
+                    {extractionLog.length > 0 && <div style={s.log}>{extractionLog.map((l, i) => <div key={i}>{l}</div>)}</div>}
+                  </div>
+                )}
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
+                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(1)}>← Back</button>
+                  <button style={s.btn} onClick={() => setStep(3)}>Continue →</button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3 - Assets */}
+            {step === 3 && (
+              <div>
+                <h2 style={{ marginBottom: '16px' }}>Assets</h2>
+                {ASSET_CATEGORIES.map(cat => {
+                  const items = assets.filter(a => a.categoryId === cat.id);
+                  return (
+                    <div key={cat.id} style={s.catCard}>
+                      <div style={s.catHeader}>
+                        <span><strong style={{ color: '#d4a853' }}>{cat.id}.</strong> {cat.name} {items.length > 0 && <span style={{ background: '#0f172a', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', marginLeft: '8px' }}>{items.length}</span>}</span>
+                        <button style={{ padding: '4px 10px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }} onClick={() => addAsset(cat.id)}>+ Add</button>
+                      </div>
+                      {items.length > 0 && items.map(a => (
+                        <div key={a.id} style={s.row}>
+                          <input style={{ ...s.rowInput, flex: 2 }} value={a.description} onChange={e => updateAsset(a.id, 'description', e.target.value)} placeholder={cat.hint} />
+                          <select style={{ ...s.rowInput, width: '60px' }} value={a.separateProperty} onChange={e => updateAsset(a.id, 'separateProperty', e.target.value)}><option value="">—</option><option value="P">P</option><option value="R">R</option></select>
+                          <input type="number" style={{ ...s.rowInput, width: '100px' }} value={a.fairMarketValue || ''} onChange={e => updateAsset(a.id, 'fairMarketValue', e.target.value)} placeholder="FMV" />
+                          <input type="number" style={{ ...s.rowInput, width: '100px' }} value={a.amountOwed || ''} onChange={e => updateAsset(a.id, 'amountOwed', e.target.value)} placeholder="Owed" />
+                          <button style={s.delBtn} onClick={() => deleteAsset(a.id)}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
+                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(2)}>← Back</button>
+                  <button style={s.btn} onClick={() => setStep(4)}>Continue →</button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4 - Debts */}
+            {step === 4 && (
+              <div>
+                <h2 style={{ marginBottom: '16px' }}>Debts</h2>
+                {DEBT_CATEGORIES.map(cat => {
+                  const items = debts.filter(d => d.categoryId === cat.id);
+                  return (
+                    <div key={cat.id} style={s.catCard}>
+                      <div style={s.catHeader}>
+                        <span><strong style={{ color: '#d4a853' }}>{cat.id}.</strong> {cat.name} {items.length > 0 && <span style={{ background: '#0f172a', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', marginLeft: '8px' }}>{items.length}</span>}</span>
+                        <button style={{ padding: '4px 10px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }} onClick={() => addDebt(cat.id)}>+ Add</button>
+                      </div>
+                      {items.length > 0 && items.map(d => (
+                        <div key={d.id} style={s.row}>
+                          <input style={{ ...s.rowInput, flex: 2 }} value={d.description} onChange={e => updateDebt(d.id, 'description', e.target.value)} placeholder={cat.hint} />
+                          <select style={{ ...s.rowInput, width: '60px' }} value={d.separateProperty} onChange={e => updateDebt(d.id, 'separateProperty', e.target.value)}><option value="">—</option><option value="P">P</option><option value="R">R</option></select>
+                          <input type="number" style={{ ...s.rowInput, width: '120px' }} value={d.totalOwing || ''} onChange={e => updateDebt(d.id, 'totalOwing', e.target.value)} placeholder="Total Owing" />
+                          <button style={s.delBtn} onClick={() => deleteDebt(d.id)}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
+                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(3)}>← Back</button>
+                  <button style={s.btn} onClick={() => setStep(5)}>Continue →</button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 5 - Generate */}
+            {step === 5 && (
+              <div>
+                <h2 style={{ marginBottom: '16px' }}>Generate Attachment</h2>
+                <div style={s.card}>
+                  <div style={{ fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.6' }}>
+                    <div><strong>Case Number:</strong> {caseInfo.caseNumber || 'TBD'}</div>
+                    <div><strong>County:</strong> {caseInfo.county || '—'}</div>
+                    <div><strong>Petitioner:</strong> {caseInfo.petitioner || '—'}</div>
+                    <div><strong>Respondent:</strong> {caseInfo.respondent || '—'}</div>
+                    <div><strong>Filing Party:</strong> {caseInfo.filingParty === 'petitioner' ? 'Petitioner' : 'Respondent'}</div>
+                    <div><strong>Date:</strong> {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Total Assets</small><div style={{ fontSize: '24px', fontWeight: '700' }}>${totalAssetsFMV.toLocaleString()}</div></div>
+                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Total Debts</small><div style={{ fontSize: '24px', fontWeight: '700' }}>${totalDebts.toLocaleString()}</div></div>
+                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Net Worth</small><div style={{ fontSize: '24px', fontWeight: '700', color: netWorth < 0 ? '#ef4444' : '#22c55e' }}>${netWorth.toLocaleString()}</div></div>
+                </div>
+                <div style={{ ...s.card, background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: 'white', textAlign: 'center' }}>
+                  <h3>Ready to Generate</h3>
+                  <p style={{ opacity: 0.8, margin: '10px 0 20px' }}>Opens in new window for print/PDF</p>
+                  <button style={s.btnGold} onClick={generateAttachment}>📄 Generate FL-142 Attachment</button>
+                </div>
+                <div style={{ marginTop: '20px' }}>
+                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(4)}>← Back</button>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
