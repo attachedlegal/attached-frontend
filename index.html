@@ -69,6 +69,7 @@
       const [uploadedFiles, setUploadedFiles] = useState([]);
       const [extracting, setExtracting] = useState(false);
       const [extractionLog, setExtractionLog] = useState([]);
+      const [isDragging, setIsDragging] = useState(false);
 
       const totalAssetsFMV = assets.reduce((sum, a) => sum + (parseFloat(a.fairMarketValue) || 0), 0);
       const totalAssetsOwed = assets.reduce((sum, a) => sum + (parseFloat(a.amountOwed) || 0), 0);
@@ -78,6 +79,25 @@
       const handleFileUpload = useCallback((e) => {
         const files = Array.from(e.target.files);
         setUploadedFiles(prev => [...prev, ...files.map(f => ({ file: f, status: 'pending', extracted: null }))]);
+      }, []);
+
+      const handleDrop = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const files = Array.from(e.dataTransfer.files).filter(f => 
+          f.type === 'application/pdf' || f.type.startsWith('image/')
+        );
+        setUploadedFiles(prev => [...prev, ...files.map(f => ({ file: f, status: 'pending', extracted: null }))]);
+      }, []);
+
+      const handleDragOver = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(true);
+      }, []);
+
+      const handleDragLeave = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(false);
       }, []);
 
       // Extract using BACKEND PROXY (not direct API call)
@@ -548,10 +568,15 @@ ${groupedDebts.map(cat => `
             {step === 2 && (
               <div style={s.card}>
                 <h2 style={{ marginBottom: '16px' }}>Upload Documents</h2>
-                <label style={s.upload}>
+                <label 
+                  style={{ ...s.upload, borderColor: isDragging ? '#d4a853' : '#cbd5e1', background: isDragging ? '#fef9e7' : '#f8fafc' }}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                >
                   <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg" onChange={handleFileUpload} style={{ display: 'none' }} />
-                  <div style={{ fontSize: '40px' }}>📁</div>
-                  <p>Drop files or click to upload</p>
+                  <div style={{ fontSize: '40px' }}>{isDragging ? '📥' : '📁'}</div>
+                  <p>{isDragging ? 'Drop files here!' : 'Drop files or click to upload'}</p>
                   <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Bank statements, brokerage statements, credit card statements</p>
                 </label>
                 {uploadedFiles.length > 0 && (
