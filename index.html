@@ -10,6 +10,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'DM Sans', sans-serif; background: #faf9f7; min-height: 100vh; }
@@ -21,43 +22,100 @@
   <script type="text/babel">
     // ============================================
     // ATTACHED - FL-142 Schedule Generator
-    // PRODUCTION VERSION - Uses backend proxy
+    // v2.0 - Category-Based Upload System
     // ============================================
     
-    // CONFIGURATION - Change this to your deployed backend URL
     const API_BASE_URL = window.location.hostname === 'localhost' 
       ? 'http://localhost:3001' 
-      : 'https://attached-backend.vercel.app'; // <-- CHANGE THIS
+      : 'https://attached-backend.vercel.app';
     
-    const { useState, useCallback } = React;
+    const { useState, useCallback, useEffect } = React;
 
-    const ASSET_CATEGORIES = [
-      { id: 1, name: "Real Estate", hint: "See Attached", fl142Ref: "Give street addresses and attach copies of deeds with legal descriptions and latest lender's statement" },
-      { id: 2, name: "Household Furniture, Furnishings, Appliances", hint: "See Attached", fl142Ref: "Identify" },
-      { id: 3, name: "Jewelry, Antiques, Art, Coin Collections, etc.", hint: "See Attached", fl142Ref: "Identify" },
-      { id: 4, name: "Vehicles, Boats, Trailers", hint: "See Attached", fl142Ref: "Describe and attach copy of title document" },
-      { id: 5, name: "Savings Accounts", hint: "See Attached", fl142Ref: "Account name, account number, bank, and branch. Attach copy of latest statement" },
-      { id: 6, name: "Checking Accounts", hint: "See Attached", fl142Ref: "Account name and number, bank, and branch. Attach copy of latest statement" },
-      { id: 7, name: "Credit Union, Other Deposit Accounts", hint: "See Attached", fl142Ref: "Account name and number, bank, and branch. Attach copy of latest statement" },
-      { id: 8, name: "Cash", hint: "See Attached", fl142Ref: "Give location" },
-      { id: 9, name: "Tax Refund", hint: "See Attached", fl142Ref: "" },
-      { id: 10, name: "Life Insurance with Cash Surrender or Loan Value", hint: "See Attached", fl142Ref: "Attach copy of declaration page for each policy" },
-      { id: 11, name: "Stocks, Bonds, Secured Notes, Mutual Funds", hint: "See Attached", fl142Ref: "Give certificate number and attach copy of the certificate or copy of latest statement" },
-      { id: 12, name: "Retirement and Pensions", hint: "See Attached", fl142Ref: "Attach copy of latest summary plan documents and latest benefit statement" },
-      { id: 13, name: "Profit-Sharing, Annuities, IRAs, Deferred Compensation", hint: "See Attached", fl142Ref: "Attach copy of latest statement" },
-      { id: 14, name: "Accounts Receivable and Unsecured Notes", hint: "See Attached", fl142Ref: "Attach copy of each" },
-      { id: 15, name: "Partnerships and Other Business Interests", hint: "See Attached", fl142Ref: "Attach copy of most current K-1 form and Schedule C" },
-      { id: 16, name: "Other Assets", hint: "See Attached", fl142Ref: "" },
+    // Category definitions with upload guidance
+    const CATEGORIES = [
+      // ASSETS
+      { id: 1, name: "Real Estate", section: "ASSETS", 
+        uploadHint: "Deeds, grant deeds, mortgage statements, property tax bills, title reports",
+        examples: "Grant Deed, Deed of Trust, HUD-1, Mortgage Statement" },
+      { id: 2, name: "Household Furniture & Appliances", section: "ASSETS", 
+        uploadHint: "Inventory lists, photos, appraisals for valuable items",
+        examples: "Photos, inventory spreadsheet, appraisal" },
+      { id: 3, name: "Jewelry, Antiques, Art, Collectibles", section: "ASSETS", 
+        uploadHint: "Appraisals, photos, receipts, certificates of authenticity",
+        examples: "Jewelry appraisal, art appraisal, receipts" },
+      { id: 4, name: "Vehicles, Boats, Trailers", section: "ASSETS", 
+        uploadHint: "Vehicle titles, registration, loan statements",
+        examples: "Certificate of Title, DMV Registration, Kelly Blue Book" },
+      { id: 5, name: "Savings Accounts", section: "ASSETS", 
+        uploadHint: "Bank savings account statements",
+        examples: "Chase Savings, Wells Fargo Savings, Capital One Savings" },
+      { id: 6, name: "Checking Accounts", section: "ASSETS", 
+        uploadHint: "Bank checking account statements",
+        examples: "Chase Checking, BofA Checking, Credit Union Checking" },
+      { id: 7, name: "Credit Union & Other Deposits", section: "ASSETS", 
+        uploadHint: "Credit union statements, money market accounts, CDs",
+        examples: "Credit Union Statement, Money Market, CD Statement" },
+      { id: 8, name: "Cash", section: "ASSETS", 
+        uploadHint: "Manual entry - specify location and amount",
+        examples: "Safe deposit box, home safe", manualOnly: true },
+      { id: 9, name: "Tax Refund", section: "ASSETS", 
+        uploadHint: "Tax returns showing expected refund",
+        examples: "1040, State Tax Return, Refund Notice" },
+      { id: 10, name: "Life Insurance (Cash Value)", section: "ASSETS", 
+        uploadHint: "Policy declaration pages, annual statements showing cash value",
+        examples: "Insurance Declaration Page, Policy Statement" },
+      { id: 11, name: "Stocks, Bonds, Mutual Funds", section: "ASSETS", 
+        uploadHint: "Brokerage statements, stock certificates",
+        examples: "Fidelity Statement, Schwab Statement, E*Trade Statement" },
+      { id: 12, name: "Retirement & Pensions", section: "ASSETS", 
+        uploadHint: "EMPLOYER-SPONSORED: 401(k), 403(b), pension statements, CalPERS, CalSTRS, FERS",
+        examples: "401(k) Statement, Pension Benefit Statement, CalPERS Annual Statement" },
+      { id: 13, name: "IRAs, Annuities, Deferred Comp", section: "ASSETS", 
+        uploadHint: "INDIVIDUAL ACCOUNTS: Traditional IRA, Roth IRA, SEP-IRA, annuities, 457 deferred comp",
+        examples: "IRA Statement, Roth IRA Statement, Annuity Contract, 457 Statement" },
+      { id: 14, name: "Accounts Receivable & Notes", section: "ASSETS", 
+        uploadHint: "Promissory notes, loans owed TO you",
+        examples: "Promissory Note, Loan Agreement (as lender)" },
+      { id: 15, name: "Business Interests", section: "ASSETS", 
+        uploadHint: "K-1 forms, Schedule C, partnership agreements, business valuations",
+        examples: "K-1, Schedule C, Operating Agreement, Business Tax Return" },
+      { id: 16, name: "Other Assets", section: "ASSETS", 
+        uploadHint: "Anything not covered above",
+        examples: "Cryptocurrency statements, patents, royalties" },
+      // DEBTS
+      { id: 19, name: "Student Loans", section: "DEBTS", 
+        uploadHint: "Student loan statements",
+        examples: "Federal Student Loan Statement, Navient, SoFi" },
+      { id: 20, name: "Taxes Owed", section: "DEBTS", 
+        uploadHint: "IRS notices, state tax bills, payment plans",
+        examples: "IRS Notice, FTB Notice, Payment Plan Agreement" },
+      { id: 21, name: "Support Arrearages", section: "DEBTS", 
+        uploadHint: "Court orders, DCSS statements showing amounts owed",
+        examples: "Court Order, DCSS Statement" },
+      { id: 22, name: "Unsecured Loans", section: "DEBTS", 
+        uploadHint: "Personal loans, lines of credit (not mortgage/auto)",
+        examples: "Personal Loan Statement, HELOC Statement, Margin Loan" },
+      { id: 23, name: "Credit Cards", section: "DEBTS", 
+        uploadHint: "Credit card statements",
+        examples: "Visa, Mastercard, Amex, Discover Statement" },
+      { id: 24, name: "Other Debts", section: "DEBTS", 
+        uploadHint: "Medical bills, judgments, other obligations",
+        examples: "Medical bills, court judgments, personal debts" },
     ];
 
-    const DEBT_CATEGORIES = [
-      { id: 19, name: "Student Loans", hint: "See Attached", fl142Ref: "Give details" },
-      { id: 20, name: "Taxes", hint: "See Attached", fl142Ref: "Give details" },
-      { id: 21, name: "Support Arrearages", hint: "See Attached", fl142Ref: "Attach copies of orders and statements" },
-      { id: 22, name: "Loans—Unsecured", hint: "See Attached", fl142Ref: "Give bank name and loan number and attach copy of latest statement" },
-      { id: 23, name: "Credit Cards", hint: "See Attached", fl142Ref: "Give creditor's name and address and the account number. Attach copy of latest statement" },
-      { id: 24, name: "Other Debts", hint: "See Attached", fl142Ref: "Specify" },
-    ];
+    const DIVIDER_FILES = {
+      1: '01_Real_Estate.pdf', 2: '02_Household_Furniture_Furnishings_Appliances.pdf',
+      3: '03_Jewelry_Antiques_Art_Coin_Collections_etc..pdf', 4: '04_Vehicles_Boats_Trailers.pdf',
+      5: '05_Savings_Accounts.pdf', 6: '06_Checking_Accounts.pdf',
+      7: '07_Credit_Union_Other_Deposit_Accounts.pdf', 8: '08_Cash.pdf',
+      9: '09_Tax_Refund.pdf', 10: '10_Life_Insurance_with_Cash_Surrender_or_Loan_Value.pdf',
+      11: '11_Stocks_Bonds_Secured_Notes_Mutual_Funds.pdf', 12: '12_Retirement_and_Pensions.pdf',
+      13: '13_Profit-Sharing_Annuities_IRAs_Deferred_Compensation.pdf',
+      14: '14_Accounts_Receivable_and_Unsecured_Notes.pdf',
+      15: '15_Partnerships_and_Other_Business_Interests.pdf', 16: '16_Other_Assets.pdf',
+      19: '19_Student_Loans.pdf', 20: '20_Taxes.pdf', 21: '21_Support_Arrearages.pdf',
+      22: '22_Loans_Unsecured.pdf', 23: '23_Credit_Cards.pdf', 24: '24_Other_Debts.pdf',
+    };
 
     function App() {
       const [currentView, setCurrentView] = useState('landing');
@@ -66,405 +124,452 @@
         petitioner: '', respondent: '', caseNumber: '', county: '',
         filingParty: 'petitioner', attorneyName: '', attorneyAddress: '', attorneyPhone: '',
       });
-      const [assets, setAssets] = useState([]);
-      const [debts, setDebts] = useState([]);
-      const [uploadedFiles, setUploadedFiles] = useState([]);
-      const [extracting, setExtracting] = useState(false);
-      const [extractionLog, setExtractionLog] = useState([]);
-      const [isDragging, setIsDragging] = useState(false);
+      
+      // Files organized by category
+      const [categoryFiles, setCategoryFiles] = useState({});
+      // Extracted items
+      const [items, setItems] = useState([]);
+      // Processing state
+      const [processing, setProcessing] = useState({});
+      // Errors
+      const [errors, setErrors] = useState([]);
+      // Generating state
+      const [generating, setGenerating] = useState(false);
+      const [genLog, setGenLog] = useState([]);
 
+      const assets = items.filter(i => i.section === 'ASSETS');
+      const debts = items.filter(i => i.section === 'DEBTS');
       const totalAssetsFMV = assets.reduce((sum, a) => sum + (parseFloat(a.fairMarketValue) || 0), 0);
       const totalAssetsOwed = assets.reduce((sum, a) => sum + (parseFloat(a.amountOwed) || 0), 0);
       const totalDebts = debts.reduce((sum, d) => sum + (parseFloat(d.totalOwing) || 0), 0);
       const netWorth = totalAssetsFMV - totalAssetsOwed - totalDebts;
 
-      const handleFileUpload = useCallback((e) => {
-        const files = Array.from(e.target.files);
-        setUploadedFiles(prev => [...prev, ...files.map(f => ({ file: f, status: 'pending', extracted: null }))]);
-      }, []);
-
-      const handleDrop = useCallback((e) => {
+      // Handle file drop into a specific category
+      const handleCategoryDrop = useCallback(async (categoryId, e) => {
         e.preventDefault();
-        setIsDragging(false);
-        const files = Array.from(e.dataTransfer.files).filter(f => 
+        e.stopPropagation();
+        
+        const files = Array.from(e.dataTransfer?.files || e.target?.files || []).filter(f => 
           f.type === 'application/pdf' || f.type.startsWith('image/')
         );
-        setUploadedFiles(prev => [...prev, ...files.map(f => ({ file: f, status: 'pending', extracted: null }))]);
-      }, []);
-
-      const handleDragOver = useCallback((e) => {
-        e.preventDefault();
-        setIsDragging(true);
-      }, []);
-
-      const handleDragLeave = useCallback((e) => {
-        e.preventDefault();
-        setIsDragging(false);
-      }, []);
-
-      // Extract using BACKEND PROXY (not direct API call)
-      const extractFromDocuments = async () => {
-        setExtracting(true);
-        setExtractionLog(['🚀 Starting extraction...']);
         
-        const pendingFiles = uploadedFiles.filter(f => f.status === 'pending');
+        if (files.length === 0) return;
         
-        for (const fileObj of pendingFiles) {
-          setExtractionLog(prev => [...prev, `📄 Processing: ${fileObj.file.name}`]);
+        const category = CATEGORIES.find(c => c.id === categoryId);
+        
+        // Add files to category
+        setCategoryFiles(prev => ({
+          ...prev,
+          [categoryId]: [...(prev[categoryId] || []), ...files.map(f => ({
+            file: f,
+            status: 'pending',
+            extracted: null,
+            error: null
+          }))]
+        }));
+        
+        // Auto-extract each file
+        for (const file of files) {
+          await extractFile(categoryId, file, category);
+        }
+      }, []);
+
+      const extractFile = async (categoryId, file, category) => {
+        setProcessing(prev => ({ ...prev, [file.name]: true }));
+        
+        try {
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.readAsDataURL(file);
+          });
           
-          try {
-            const base64 = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result.split(',')[1]);
-              reader.onerror = () => reject(new Error('Failed to read file'));
-              reader.readAsDataURL(fileObj.file);
-            });
-            
-            const isPDF = fileObj.file.type === 'application/pdf';
-            const contentBlock = isPDF 
-              ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
-              : { type: "image", source: { type: "base64", media_type: fileObj.file.type, data: base64 } };
-            
-            setExtractionLog(prev => [...prev, `🔍 Analyzing with Claude AI...`]);
-            
-            // Call YOUR backend proxy instead of Claude directly
-            const response = await fetch(`${API_BASE_URL}/api/extract`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
-                max_tokens: 4000,
-                messages: [{
-                  role: "user",
-                  content: [
-                    contentBlock,
-                    {
-                      type: "text",
-                      text: `Extract financial data from this document for a California FL-142 Schedule of Assets and Debts.
+          const isPDF = file.type === 'application/pdf';
+          const contentBlock = isPDF 
+            ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+            : { type: "image", source: { type: "base64", media_type: file.type, data: base64 } };
+          
+          const response = await fetch(`${API_BASE_URL}/api/extract`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 4000,
+              messages: [{
+                role: "user",
+                content: [
+                  contentBlock,
+                  {
+                    type: "text",
+                    text: `Extract financial data from this document. The user has indicated this is for FL-142 Category ${categoryId}: ${category.name}.
+
+Expected document types: ${category.examples}
 
 Return ONLY a valid JSON object:
 {
-  "documentType": "bank_statement|brokerage|retirement|credit_card|loan|other",
-  "institution": "name",
-  "accountType": "checking|savings|investment|retirement|credit|loan",
-  "accountNumber": "last 4 or full",
-  "accountHolder": "name",
-  "statementDate": "YYYY-MM-DD or null",
+  "documentType": "statement|deed|title|policy|tax_form|receipt|other",
+  "institution": "name of bank/company/issuer",
+  "accountType": "checking|savings|investment|retirement|credit|loan|property|vehicle|other",
+  "accountNumber": "last 4 digits or full number if visible",
+  "description": "brief description of the asset/debt",
+  "propertyAddress": "full address if this is real estate",
+  "vehicleInfo": "year make model if vehicle",
   "currentBalance": 0.00,
-  "amountOwed": null,
-  "additionalDetails": "other info"
+  "fairMarketValue": 0.00,
+  "amountOwed": 0.00,
+  "statementDate": "YYYY-MM-DD or null",
+  "confidence": "high|medium|low",
+  "confidenceReason": "explanation if not high"
 }
 
-Return ONLY the JSON.`
-                    }
-                  ]
-                }]
-              })
-            });
-            
-            if (!response.ok) throw new Error(`API error ${response.status}`);
-            
-            const data = await response.json();
-            let text = data.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            const extracted = JSON.parse(text);
-            
-            setUploadedFiles(prev => prev.map(f => 
-              f.file.name === fileObj.file.name ? { ...f, status: 'extracted', extracted } : f
-            ));
-            
-            autoCategorizeFinding(extracted, fileObj.file.name);
-            setExtractionLog(prev => [...prev, `✅ ${extracted.institution} - $${extracted.currentBalance?.toLocaleString() || extracted.amountOwed?.toLocaleString() || '0'}`]);
-            
-          } catch (error) {
-            setExtractionLog(prev => [...prev, `❌ Error: ${error.message}`]);
-            setUploadedFiles(prev => prev.map(f => 
-              f.file.name === fileObj.file.name ? { ...f, status: 'error' } : f
-            ));
+Return ONLY the JSON, no other text.`
+                  }
+                ]
+              }]
+            })
+          });
+          
+          if (!response.ok) throw new Error(`API error: ${response.status}`);
+          
+          const data = await response.json();
+          
+          if (data.error) {
+            throw new Error(data.error.message || 'API returned an error');
           }
+          
+          let text = data.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          const extracted = JSON.parse(text);
+          
+          // Update file status
+          setCategoryFiles(prev => ({
+            ...prev,
+            [categoryId]: (prev[categoryId] || []).map(f => 
+              f.file.name === file.name ? { ...f, status: 'extracted', extracted } : f
+            )
+          }));
+          
+          // Add to items
+          const newItem = {
+            id: Date.now() + Math.random(),
+            categoryId,
+            section: category.section,
+            description: extracted.description || extracted.institution || 'Unknown',
+            institution: extracted.institution,
+            accountNumber: extracted.accountNumber,
+            propertyAddress: extracted.propertyAddress,
+            vehicleInfo: extracted.vehicleInfo,
+            fairMarketValue: extracted.fairMarketValue || extracted.currentBalance || 0,
+            amountOwed: extracted.amountOwed || 0,
+            totalOwing: extracted.amountOwed || 0,
+            sourceFile: file.name,
+            confidence: extracted.confidence,
+            confidenceReason: extracted.confidenceReason,
+            statementDate: extracted.statementDate,
+          };
+          
+          setItems(prev => [...prev, newItem]);
+          
+        } catch (error) {
+          console.error('Extraction error:', error);
+          
+          // Determine likely cause
+          let errorReason = 'Unknown error';
+          if (error.message.includes('API error')) {
+            errorReason = 'API temporarily unavailable. Try again in a moment.';
+          } else if (error.message.includes('JSON')) {
+            errorReason = 'Could not parse document. May be scanned/image-based or unusual format.';
+          } else if (error.message.includes('read file')) {
+            errorReason = 'File could not be read. Try re-uploading.';
+          } else {
+            errorReason = error.message;
+          }
+          
+          setCategoryFiles(prev => ({
+            ...prev,
+            [categoryId]: (prev[categoryId] || []).map(f => 
+              f.file.name === file.name ? { ...f, status: 'error', error: errorReason } : f
+            )
+          }));
+          
+          setErrors(prev => [...prev, { file: file.name, category: category.name, reason: errorReason }]);
         }
         
-        setExtracting(false);
-        setExtractionLog(prev => [...prev, '✨ Extraction complete!']);
+        setProcessing(prev => ({ ...prev, [file.name]: false }));
       };
 
-      const autoCategorizeFinding = (extracted, fileName) => {
-        const { accountType, institution, accountNumber, currentBalance, amountOwed } = extracted;
-        let categoryId;
-        let isDebt = false;
-        const type = (accountType || '').toLowerCase();
-        
-        if (type.includes('check')) categoryId = 6;
-        else if (type.includes('saving')) categoryId = 5;
-        else if (type.includes('invest') || type.includes('brokerage')) categoryId = 11;
-        else if (type.includes('retire') || type.includes('401') || type.includes('ira')) categoryId = 13;
-        else if (type.includes('credit')) { categoryId = 23; isDebt = true; }
-        else if (type.includes('loan')) { categoryId = 22; isDebt = true; }
-        else categoryId = isDebt ? 24 : 16;
-        
-        const newItem = {
-          id: Date.now() + Math.random(),
+      const addManualItem = (categoryId) => {
+        const category = CATEGORIES.find(c => c.id === categoryId);
+        setItems(prev => [...prev, {
+          id: Date.now(),
           categoryId,
-          description: `${institution || 'Unknown'} - ${accountType || 'Account'}${accountNumber ? ` (...${String(accountNumber).slice(-4)})` : ''}`,
-          separateProperty: '',
-          dateAcquired: '',
-          fairMarketValue: currentBalance || 0,
-          amountOwed: amountOwed || 0,
-          totalOwing: amountOwed || 0,
-          sourceFile: fileName,
-        };
-        
-        if (isDebt) setDebts(prev => [...prev, newItem]);
-        else setAssets(prev => [...prev, newItem]);
+          section: category.section,
+          description: '',
+          institution: '',
+          fairMarketValue: 0,
+          amountOwed: 0,
+          totalOwing: 0,
+          manual: true,
+        }]);
       };
 
-      const addAsset = (categoryId) => setAssets(prev => [...prev, { id: Date.now(), categoryId, description: '', separateProperty: '', dateAcquired: '', fairMarketValue: 0, amountOwed: 0 }]);
-      const addDebt = (categoryId) => setDebts(prev => [...prev, { id: Date.now(), categoryId, description: '', separateProperty: '', dateAcquired: '', totalOwing: 0 }]);
-      const updateAsset = (id, field, value) => setAssets(prev => prev.map(a => a.id === id ? { ...a, [field]: value } : a));
-      const updateDebt = (id, field, value) => setDebts(prev => prev.map(d => d.id === id ? { ...d, [field]: value } : d));
-      const deleteAsset = (id) => setAssets(prev => prev.filter(a => a.id !== id));
-      const deleteDebt = (id) => setDebts(prev => prev.filter(d => d.id !== id));
+      const updateItem = (id, field, value) => {
+        setItems(prev => prev.map(item => 
+          item.id === id ? { ...item, [field]: value } : item
+        ));
+      };
 
-      // Format date for display
+      const deleteItem = (id) => {
+        setItems(prev => prev.filter(item => item.id !== id));
+      };
+
       const formatDate = (date) => {
         return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       };
 
-      const generateAttachment = () => {
-        const groupedAssets = ASSET_CATEGORIES.map(cat => ({ ...cat, items: assets.filter(a => a.categoryId === cat.id) })).filter(cat => cat.items.length > 0);
-        const groupedDebts = DEBT_CATEGORIES.map(cat => ({ ...cat, items: debts.filter(d => d.categoryId === cat.id) })).filter(cat => cat.items.length > 0);
+      // Get categories with items or files
+      const getCategoriesWithContent = () => {
+        const catIds = new Set([
+          ...items.map(i => i.categoryId),
+          ...Object.keys(categoryFiles).map(Number).filter(id => categoryFiles[id]?.length > 0)
+        ]);
+        return CATEGORIES.filter(c => catIds.has(c.id));
+      };
+
+      // Generate merged PDF
+      const generateMergedPDF = async () => {
+        setGenerating(true);
+        setGenLog(['📄 Starting PDF generation...']);
+        
+        try {
+          const { PDFDocument } = PDFLib;
+          const mergedPdf = await PDFDocument.create();
+          const baseUrl = window.location.origin;
+          
+          const usedCategories = getCategoriesWithContent().sort((a, b) => a.id - b.id);
+          
+          for (const category of usedCategories) {
+            setGenLog(prev => [...prev, `📁 Processing: ${category.name}`]);
+            
+            // Add divider
+            const dividerFile = DIVIDER_FILES[category.id];
+            if (dividerFile) {
+              try {
+                const dividerUrl = `${baseUrl}/${dividerFile}`;
+                const dividerResponse = await fetch(dividerUrl);
+                if (dividerResponse.ok) {
+                  const dividerBytes = await dividerResponse.arrayBuffer();
+                  const dividerPdf = await PDFDocument.load(dividerBytes);
+                  const dividerPages = await mergedPdf.copyPages(dividerPdf, dividerPdf.getPageIndices());
+                  dividerPages.forEach(page => mergedPdf.addPage(page));
+                  setGenLog(prev => [...prev, `  ✓ Added divider`]);
+                }
+              } catch (e) {
+                console.log('Could not add divider:', e);
+              }
+            }
+            
+            // Add source files for this category
+            const catFiles = categoryFiles[category.id] || [];
+            for (const fileObj of catFiles) {
+              if (fileObj.file.type === 'application/pdf') {
+                try {
+                  const fileBytes = await fileObj.file.arrayBuffer();
+                  const filePdf = await PDFDocument.load(fileBytes);
+                  const filePages = await mergedPdf.copyPages(filePdf, filePdf.getPageIndices());
+                  filePages.forEach(page => mergedPdf.addPage(page));
+                  setGenLog(prev => [...prev, `  ✓ Added: ${fileObj.file.name}`]);
+                } catch (e) {
+                  setGenLog(prev => [...prev, `  ⚠️ Could not add: ${fileObj.file.name} (may be encrypted)`]);
+                }
+              } else {
+                // For images, we'd need to embed them - skip for now
+                setGenLog(prev => [...prev, `  ⚠️ Skipped image: ${fileObj.file.name} (use PDF for merged output)`]);
+              }
+            }
+          }
+          
+          setGenLog(prev => [...prev, '📦 Finalizing PDF...']);
+          const mergedBytes = await mergedPdf.save();
+          const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+          const fileName = `FL142_Attachment_${caseInfo.caseNumber || 'Schedule'}_${new Date().toISOString().split('T')[0]}.pdf`;
+          saveAs(blob, fileName);
+          
+          setGenLog(prev => [...prev, `✅ Downloaded: ${fileName}`]);
+          
+        } catch (error) {
+          setGenLog(prev => [...prev, `❌ Error: ${error.message}`]);
+        }
+        
+        setGenerating(false);
+      };
+
+      // Generate ZIP
+      const generateZIP = async () => {
+        setGenerating(true);
+        setGenLog(['📦 Creating ZIP package...']);
+        
+        try {
+          const zip = new JSZip();
+          const baseUrl = window.location.origin;
+          const usedCategories = getCategoriesWithContent().sort((a, b) => a.id - b.id);
+          
+          for (const category of usedCategories) {
+            const folderName = `${String(category.id).padStart(2, '0')}_${category.name.replace(/[^a-zA-Z0-9 ]/g, '').replace(/ /g, '_').substring(0, 40)}`;
+            const folder = zip.folder(folderName);
+            
+            setGenLog(prev => [...prev, `📁 ${folderName}`]);
+            
+            // Add divider
+            const dividerFile = DIVIDER_FILES[category.id];
+            if (dividerFile) {
+              try {
+                const response = await fetch(`${baseUrl}/${dividerFile}`);
+                if (response.ok) {
+                  const blob = await response.blob();
+                  folder.file(`00_DIVIDER.pdf`, blob);
+                }
+              } catch (e) {
+                console.log('Could not fetch divider:', e);
+              }
+            }
+            
+            // Add source files
+            const catFiles = categoryFiles[category.id] || [];
+            let fileIndex = 1;
+            for (const fileObj of catFiles) {
+              const safeName = fileObj.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+              folder.file(`${String(fileIndex).padStart(2, '0')}_${safeName}`, fileObj.file);
+              fileIndex++;
+            }
+            
+            setGenLog(prev => [...prev, `  ✓ ${fileIndex - 1} documents`]);
+          }
+          
+          setGenLog(prev => [...prev, '🗜️ Compressing...']);
+          const content = await zip.generateAsync({ type: 'blob' });
+          const fileName = `FL142_Attachment_${caseInfo.caseNumber || 'Schedule'}_${new Date().toISOString().split('T')[0]}.zip`;
+          saveAs(content, fileName);
+          
+          setGenLog(prev => [...prev, `✅ Downloaded: ${fileName}`]);
+          
+        } catch (error) {
+          setGenLog(prev => [...prev, `❌ Error: ${error.message}`]);
+        }
+        
+        setGenerating(false);
+      };
+
+      // Generate print schedule (original functionality)
+      const generatePrintSchedule = () => {
+        const groupedAssets = CATEGORIES.filter(c => c.section === 'ASSETS')
+          .map(cat => ({ ...cat, items: items.filter(i => i.categoryId === cat.id) }))
+          .filter(cat => cat.items.length > 0);
+        const groupedDebts = CATEGORIES.filter(c => c.section === 'DEBTS')
+          .map(cat => ({ ...cat, items: items.filter(i => i.categoryId === cat.id) }))
+          .filter(cat => cat.items.length > 0);
+        
         const today = formatDate(new Date());
         const filingPartyName = caseInfo.filingParty === 'petitioner' ? caseInfo.petitioner : caseInfo.respondent;
 
         const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>FL-142 Attachment - ${caseInfo.caseNumber || 'Schedule of Assets and Debts'}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    @page { size: letter; margin: 0.75in; }
-    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.4; color: #000; max-width: 8.5in; margin: 0 auto; padding: 0.5in; }
-    
-    /* Caption - FL-142 Style */
-    .caption { margin-bottom: 24pt; }
-    .caption-top { display: grid; grid-template-columns: 2.5in 1fr; border: 1px solid #000; }
-    .caption-left { padding: 8pt; border-right: 1px solid #000; font-size: 10pt; }
-    .caption-left-label { font-size: 8pt; margin-bottom: 4pt; }
-    .caption-right { display: flex; flex-direction: column; }
-    .caption-court { padding: 8pt; border-bottom: 1px solid #000; text-align: center; font-weight: bold; }
-    .caption-parties { display: grid; grid-template-columns: 1fr auto; }
-    .caption-party-col { padding: 8pt; }
-    .caption-case-col { padding: 8pt; border-left: 1px solid #000; min-width: 1.8in; }
-    .caption-case-label { font-size: 9pt; margin-bottom: 2pt; }
-    .caption-case-number { font-weight: bold; font-size: 11pt; }
-    .caption-title { text-align: center; padding: 8pt; border: 1px solid #000; border-top: none; font-weight: bold; background: #f5f5f5; }
-    .caption-checkbox { margin-top: 4pt; font-size: 10pt; }
-    
-    /* Document Header */
-    .doc-header { text-align: center; margin: 20pt 0; padding-bottom: 12pt; border-bottom: 2pt solid #000; }
-    .doc-header h1 { font-size: 14pt; font-weight: bold; letter-spacing: 1pt; margin-bottom: 4pt; }
-    .doc-header p { font-size: 11pt; }
-    
-    /* Section Dividers */
-    .section-divider { 
-      background: #000; 
-      color: #fff; 
-      padding: 8pt 12pt; 
-      font-weight: bold; 
-      font-size: 11pt; 
-      margin: 20pt 0 12pt 0;
-      letter-spacing: 0.5pt;
-    }
-    
-    /* Category Headers - only show if items exist */
-    .category-divider {
-      background: #f0f0f0;
-      border: 1px solid #ccc;
-      border-left: 4pt solid #000;
-      padding: 8pt 12pt;
-      margin: 16pt 0 8pt 0;
-      page-break-inside: avoid;
-    }
-    .category-number { font-weight: bold; }
-    .category-name { font-weight: bold; }
-    .category-ref { font-size: 9pt; font-style: italic; color: #555; margin-top: 2pt; }
-    
-    /* Tables */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 12pt; font-size: 10pt; }
-    th { background: #e5e5e5; border: 1px solid #000; padding: 6pt 8pt; text-align: left; font-weight: bold; font-size: 9pt; }
-    td { border: 1px solid #000; padding: 6pt 8pt; vertical-align: top; }
-    .col-desc { width: 40%; }
-    .col-sep { width: 8%; text-align: center; }
-    .col-date { width: 15%; }
-    .col-money { width: 18%; text-align: right; font-family: 'Courier New', monospace; }
-    
-    /* Totals */
-    .totals-section { margin-top: 24pt; border: 2pt solid #000; }
-    .totals-row { display: grid; grid-template-columns: 1fr 1fr 1fr; }
-    .totals-box { padding: 12pt; text-align: center; border-right: 1pt solid #000; }
-    .totals-box:last-child { border-right: none; }
-    .totals-label { font-size: 9pt; font-weight: bold; margin-bottom: 4pt; }
-    .totals-value { font-size: 14pt; font-weight: bold; font-family: 'Courier New', monospace; }
-    
-    /* Signature */
-    .declaration { margin-top: 32pt; padding-top: 16pt; border-top: 1pt solid #000; }
-    .declaration-text { font-size: 10pt; margin-bottom: 24pt; }
-    .sig-row { display: flex; justify-content: space-between; margin-top: 32pt; }
-    .sig-field { width: 45%; }
-    .sig-line { border-top: 1pt solid #000; padding-top: 4pt; font-size: 9pt; }
-    .print-name { margin-top: 16pt; }
-    
-    /* Footer */
-    .footer { margin-top: 24pt; padding-top: 12pt; border-top: 1pt solid #ccc; text-align: center; font-size: 8pt; color: #666; }
-  </style>
-</head>
-<body>
+<html><head><meta charset="UTF-8">
+<title>FL-142 Attachment - ${caseInfo.caseNumber || 'Schedule'}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@page { size: letter; margin: 0.75in; }
+body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.4; max-width: 8.5in; margin: 0 auto; padding: 0.5in; }
+.header { text-align: center; margin-bottom: 20pt; border-bottom: 2pt solid #000; padding-bottom: 12pt; }
+.header h1 { font-size: 14pt; letter-spacing: 1pt; margin-bottom: 4pt; }
+.case-info { margin-bottom: 20pt; font-size: 11pt; }
+.section-title { background: #000; color: #fff; padding: 8pt 12pt; font-weight: bold; margin: 20pt 0 12pt; }
+.category { background: #f0f0f0; border-left: 4pt solid #000; padding: 8pt 12pt; margin: 16pt 0 8pt; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12pt; font-size: 10pt; }
+th { background: #e5e5e5; border: 1px solid #000; padding: 6pt; text-align: left; font-size: 9pt; }
+td { border: 1px solid #000; padding: 6pt; }
+.money { text-align: right; font-family: 'Courier New', monospace; }
+.totals { margin-top: 24pt; border: 2pt solid #000; }
+.totals-row { display: grid; grid-template-columns: 1fr 1fr 1fr; }
+.totals-box { padding: 12pt; text-align: center; border-right: 1pt solid #000; }
+.totals-box:last-child { border-right: none; }
+.declaration { margin-top: 32pt; padding-top: 16pt; border-top: 1pt solid #000; font-size: 10pt; }
+.sig-row { display: flex; justify-content: space-between; margin-top: 32pt; }
+.sig-field { width: 45%; }
+.sig-line { border-top: 1pt solid #000; padding-top: 4pt; font-size: 9pt; }
+.footer { margin-top: 24pt; text-align: center; font-size: 8pt; color: #666; border-top: 1pt solid #ccc; padding-top: 12pt; }
+</style></head><body>
 
-<!-- Caption Block - FL-142 Style -->
-<div class="caption">
-  <div class="caption-top">
-    <div class="caption-left">
-      <div class="caption-left-label">ATTORNEY OR PARTY WITHOUT ATTORNEY:</div>
-      <div>${filingPartyName || '________________________________'}</div>
-      <div>${caseInfo.attorneyAddress || '________________________________'}</div>
-      <div>TELEPHONE: ${caseInfo.attorneyPhone || '________________'}</div>
-      <div style="margin-top: 8pt;"><small>ATTORNEY FOR: ${caseInfo.filingParty === 'petitioner' ? 'Petitioner' : 'Respondent'}</small></div>
-    </div>
-    <div class="caption-right">
-      <div class="caption-court">SUPERIOR COURT OF CALIFORNIA, COUNTY OF ${(caseInfo.county || '____________').toUpperCase()}</div>
-      <div class="caption-parties">
-        <div class="caption-party-col">
-          <div>PETITIONER: <strong>${caseInfo.petitioner || '________________________'}</strong></div>
-          <div style="margin-top: 8pt;">RESPONDENT: <strong>${caseInfo.respondent || '________________________'}</strong></div>
-        </div>
-        <div class="caption-case-col">
-          <div class="caption-case-label">CASE NUMBER:</div>
-          <div class="caption-case-number">${caseInfo.caseNumber || '________________________'}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div class="caption-title">
-    ATTACHMENT TO SCHEDULE OF ASSETS AND DEBTS (FL-142)
-    <div class="caption-checkbox">☑ ${caseInfo.filingParty === 'petitioner' ? "Petitioner's" : "Respondent's"}</div>
-  </div>
+<div class="header">
+  <h1>SCHEDULE OF ASSETS AND DEBTS</h1>
+  <p>Attachment to FL-142</p>
 </div>
 
-<!-- Case Info Summary -->
-<div style="margin-bottom: 16pt; font-size: 10pt;">
-  <strong>Date:</strong> ${today}
+<div class="case-info">
+  <strong>${caseInfo.petitioner || '_______________'}</strong> (Petitioner) vs. 
+  <strong>${caseInfo.respondent || '_______________'}</strong> (Respondent)<br>
+  Case Number: <strong>${caseInfo.caseNumber || '_______________'}</strong> | 
+  Superior Court of California, County of <strong>${caseInfo.county || '_______________'}</strong><br>
+  Declaration of: <strong>${filingPartyName || '_______________'}</strong> | Date: ${today}
 </div>
 
-<!-- ASSETS SECTION -->
 ${groupedAssets.length > 0 ? `
-<div class="section-divider">ASSETS</div>
+<div class="section-title">ASSETS</div>
 ${groupedAssets.map(cat => `
-<div class="category-divider">
-  <div><span class="category-number">ITEM ${cat.id}.</span> <span class="category-name">${cat.name.toUpperCase()}</span></div>
-  ${cat.fl142Ref ? `<div class="category-ref">(${cat.fl142Ref})</div>` : ''}
-</div>
+<div class="category"><strong>Item ${cat.id}.</strong> ${cat.name}</div>
 <table>
-  <thead>
-    <tr>
-      <th class="col-desc">Description</th>
-      <th class="col-sep">Sep. Prop.</th>
-      <th class="col-date">Date Acquired</th>
-      <th class="col-money">Fair Market Value</th>
-      <th class="col-money">Amount Owed</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${cat.items.map(item => `
-    <tr>
-      <td class="col-desc">${item.description || '—'}</td>
-      <td class="col-sep">${item.separateProperty || '—'}</td>
-      <td class="col-date">${item.dateAcquired || '—'}</td>
-      <td class="col-money">$${parseFloat(item.fairMarketValue || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-      <td class="col-money">$${parseFloat(item.amountOwed || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-    </tr>
-    `).join('')}
-  </tbody>
+  <tr><th style="width:40%">Description</th><th style="width:10%">S/P</th><th style="width:15%">Date Acquired</th><th style="width:17%">Fair Market Value</th><th style="width:18%">Amount Owed</th></tr>
+  ${cat.items.map(item => `
+  <tr>
+    <td>${item.description || ''}${item.propertyAddress ? '<br><small>' + item.propertyAddress + '</small>' : ''}${item.vehicleInfo ? '<br><small>' + item.vehicleInfo + '</small>' : ''}</td>
+    <td>${item.separateProperty || ''}</td>
+    <td>${item.dateAcquired || ''}</td>
+    <td class="money">$${(parseFloat(item.fairMarketValue) || 0).toLocaleString()}</td>
+    <td class="money">$${(parseFloat(item.amountOwed) || 0).toLocaleString()}</td>
+  </tr>`).join('')}
 </table>
-`).join('')}
-` : '<p style="margin: 16pt 0; font-style: italic;">No assets to report.</p>'}
+`).join('')}` : ''}
 
-<!-- DEBTS SECTION -->
 ${groupedDebts.length > 0 ? `
-<div class="section-divider">DEBTS</div>
+<div class="section-title">DEBTS</div>
 ${groupedDebts.map(cat => `
-<div class="category-divider">
-  <div><span class="category-number">ITEM ${cat.id}.</span> <span class="category-name">${cat.name.toUpperCase()}</span></div>
-  ${cat.fl142Ref ? `<div class="category-ref">(${cat.fl142Ref})</div>` : ''}
-</div>
+<div class="category"><strong>Item ${cat.id}.</strong> ${cat.name}</div>
 <table>
-  <thead>
-    <tr>
-      <th class="col-desc">Creditor / Description</th>
-      <th class="col-sep">Sep. Prop.</th>
-      <th class="col-date">Date Incurred</th>
-      <th class="col-money">Total Owing</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${cat.items.map(item => `
-    <tr>
-      <td class="col-desc">${item.description || '—'}</td>
-      <td class="col-sep">${item.separateProperty || '—'}</td>
-      <td class="col-date">${item.dateAcquired || '—'}</td>
-      <td class="col-money">$${parseFloat(item.totalOwing || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-    </tr>
-    `).join('')}
-  </tbody>
+  <tr><th style="width:40%">Description</th><th style="width:10%">S/P</th><th style="width:15%">Date Incurred</th><th style="width:35%">Total Owing</th></tr>
+  ${cat.items.map(item => `
+  <tr>
+    <td>${item.description || ''}</td>
+    <td>${item.separateProperty || ''}</td>
+    <td>${item.dateAcquired || ''}</td>
+    <td class="money">$${(parseFloat(item.totalOwing) || 0).toLocaleString()}</td>
+  </tr>`).join('')}
 </table>
-`).join('')}
-` : '<p style="margin: 16pt 0; font-style: italic;">No debts to report.</p>'}
+`).join('')}` : ''}
 
-<!-- TOTALS -->
-<div class="totals-section">
+<div class="totals">
   <div class="totals-row">
-    <div class="totals-box">
-      <div class="totals-label">TOTAL ASSETS (FMV)</div>
-      <div class="totals-value">$${totalAssetsFMV.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-    </div>
-    <div class="totals-box">
-      <div class="totals-label">TOTAL DEBTS</div>
-      <div class="totals-value">$${totalDebts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-    </div>
-    <div class="totals-box">
-      <div class="totals-label">NET WORTH</div>
-      <div class="totals-value">$${netWorth.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-    </div>
+    <div class="totals-box"><small>TOTAL ASSETS (FMV)</small><br><strong>$${totalAssetsFMV.toLocaleString()}</strong></div>
+    <div class="totals-box"><small>TOTAL DEBTS</small><br><strong>$${totalDebts.toLocaleString()}</strong></div>
+    <div class="totals-box"><small>NET WORTH</small><br><strong style="color:${netWorth < 0 ? 'red' : 'green'}">$${netWorth.toLocaleString()}</strong></div>
   </div>
 </div>
 
-<!-- Declaration & Signature -->
 <div class="declaration">
-  <p class="declaration-text">I declare under penalty of perjury under the laws of the State of California that the foregoing is true and correct.</p>
+  <p>I declare under penalty of perjury under the laws of the State of California that the foregoing is true and correct.</p>
   <div class="sig-row">
-    <div class="sig-field">
-      <div class="sig-line">Date</div>
-    </div>
-    <div class="sig-field">
-      <div class="sig-line">Signature of Declarant</div>
-    </div>
+    <div class="sig-field"><div class="sig-line">Date</div></div>
+    <div class="sig-field"><div class="sig-line">Signature of Declarant</div></div>
   </div>
-  <div class="print-name">
-    <div class="sig-field">
-      <div class="sig-line">Print Name: ${filingPartyName || ''}</div>
-    </div>
+  <div class="sig-row">
+    <div class="sig-field"><div class="sig-line">Print Name: ${filingPartyName || ''}</div></div>
   </div>
 </div>
 
-<!-- Footer -->
 <div class="footer">
   <p>Attachment to FL-142 Schedule of Assets and Debts</p>
-  <p>Family Code §§ 2100–2113 | Code of Civil Procedure §§ 2030.010–2030.310</p>
-  <p style="margin-top: 8pt;">Generated by ATTACHED • attached.legal</p>
+  <p>Generated by ATTACHED • attached.legal</p>
 </div>
 
-</body>
-</html>`;
+</body></html>`;
 
         const win = window.open('', '_blank');
         win.document.write(html);
@@ -472,340 +577,385 @@ ${groupedDebts.map(cat => `
         setTimeout(() => win.print(), 500);
       };
 
-      // Divider filename mapping
-      const DIVIDER_FILES = {
-        1: '01_Real_Estate.pdf',
-        2: '02_Household_Furniture_Furnishings_Appliances.pdf',
-        3: '03_Jewelry_Antiques_Art_Coin_Collections_etc..pdf',
-        4: '04_Vehicles_Boats_Trailers.pdf',
-        5: '05_Savings_Accounts.pdf',
-        6: '06_Checking_Accounts.pdf',
-        7: '07_Credit_Union_Other_Deposit_Accounts.pdf',
-        8: '08_Cash.pdf',
-        9: '09_Tax_Refund.pdf',
-        10: '10_Life_Insurance_with_Cash_Surrender_or_Loan_Value.pdf',
-        11: '11_Stocks_Bonds_Secured_Notes_Mutual_Funds.pdf',
-        12: '12_Retirement_and_Pensions.pdf',
-        13: '13_Profit-Sharing_Annuities_IRAs_Deferred_Compensation.pdf',
-        14: '14_Accounts_Receivable_and_Unsecured_Notes.pdf',
-        15: '15_Partnerships_and_Other_Business_Interests.pdf',
-        16: '16_Other_Assets.pdf',
-        19: '19_Student_Loans.pdf',
-        20: '20_Taxes.pdf',
-        21: '21_Support_Arrearages.pdf',
-        22: '22_Loans_Unsecured.pdf',
-        23: '23_Credit_Cards.pdf',
-        24: '24_Other_Debts.pdf',
-      };
-
-      const generateZIP = async () => {
-        setExtractionLog(['📦 Creating ZIP package...']);
-        
-        try {
-          const zip = new JSZip();
-          const baseUrl = window.location.hostname === 'localhost' 
-            ? '' 
-            : 'https://attached-frontend.vercel.app';
-          
-          // Get all categories that have items
-          const usedAssetCategories = [...new Set(assets.map(a => a.categoryId))];
-          const usedDebtCategories = [...new Set(debts.map(d => d.categoryId))];
-          const allUsedCategories = [...usedAssetCategories, ...usedDebtCategories].sort((a, b) => a - b);
-          
-          setExtractionLog(prev => [...prev, `📋 Found ${allUsedCategories.length} categories with items`]);
-          
-          // Create folder for each used category
-          for (const catId of allUsedCategories) {
-            const category = [...ASSET_CATEGORIES, ...DEBT_CATEGORIES].find(c => c.id === catId);
-            if (!category) continue;
-            
-            const folderName = `${String(catId).padStart(2, '0')}_${category.name.replace(/[^a-zA-Z0-9 ]/g, '').replace(/ /g, '_').substring(0, 40)}`;
-            const folder = zip.folder(folderName);
-            
-            // Add divider PDF
-            const dividerFile = DIVIDER_FILES[catId];
-            if (dividerFile) {
-              try {
-                setExtractionLog(prev => [...prev, `📄 Fetching divider for Item ${catId}...`]);
-                const dividerUrl = `${baseUrl}/${dividerFile}`;
-                const response = await fetch(dividerUrl);
-                if (response.ok) {
-                  const blob = await response.blob();
-                  folder.file(`00_DIVIDER.pdf`, blob);
-                }
-              } catch (e) {
-                console.log(`Could not fetch divider for category ${catId}:`, e);
-              }
-            }
-            
-            // Find items in this category
-            const categoryItems = [
-              ...assets.filter(a => a.categoryId === catId),
-              ...debts.filter(d => d.categoryId === catId)
-            ];
-            
-            // Add source files for items in this category
-            let fileIndex = 1;
-            for (const item of categoryItems) {
-              if (item.sourceFile) {
-                const uploadedFile = uploadedFiles.find(f => f.file.name === item.sourceFile);
-                if (uploadedFile) {
-                  const ext = uploadedFile.file.name.split('.').pop();
-                  const safeName = uploadedFile.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-                  folder.file(`${String(fileIndex).padStart(2, '0')}_${safeName}`, uploadedFile.file);
-                  fileIndex++;
-                }
-              }
-            }
-            
-            setExtractionLog(prev => [...prev, `✅ ${folderName}: ${fileIndex - 1} documents`]);
-          }
-          
-          // Generate the ZIP
-          setExtractionLog(prev => [...prev, '🗜️ Compressing files...']);
-          const content = await zip.generateAsync({ type: 'blob' });
-          
-          // Download
-          const fileName = `FL142_Attachment_${caseInfo.caseNumber || 'Schedule'}_${new Date().toISOString().split('T')[0]}.zip`;
-          saveAs(content, fileName);
-          
-          setExtractionLog(prev => [...prev, `✅ Downloaded: ${fileName}`]);
-          
-        } catch (error) {
-          setExtractionLog(prev => [...prev, `❌ Error: ${error.message}`]);
-          console.error('ZIP generation error:', error);
-        }
-      };
-
       // Styles
       const s = {
         landing: { minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a, #1e293b)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white', textAlign: 'center', padding: '40px' },
         nav: { background: '#0f172a', padding: '12px 20px', position: 'sticky', top: 0, zIndex: 100 },
-        navInner: { maxWidth: '900px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-        main: { maxWidth: '900px', margin: '0 auto', padding: '20px' },
+        navInner: { maxWidth: '1100px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+        main: { maxWidth: '1100px', margin: '0 auto', padding: '20px' },
         card: { background: 'white', borderRadius: '10px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: '16px' },
-        btn: { padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' },
-        btnGold: { padding: '14px 40px', background: '#d4a853', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '16px' },
+        btn: { padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' },
+        btnGold: { padding: '14px 28px', background: '#d4a853', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '15px' },
+        btnGreen: { padding: '14px 28px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '15px' },
+        btnOutline: { padding: '10px 20px', background: 'transparent', color: '#0f172a', border: '2px solid #0f172a', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' },
         input: { width: '100%', padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '14px' },
         label: { display: 'block', fontSize: '12px', fontWeight: '600', color: '#334155', marginBottom: '4px' },
-        catCard: { background: 'white', borderRadius: '10px', marginBottom: '10px', overflow: 'hidden' },
-        catHeader: { display: 'flex', justifyContent: 'space-between', padding: '12px 16px', borderLeft: '3px solid #d4a853', background: 'linear-gradient(90deg, rgba(212,168,83,0.08), transparent)', cursor: 'pointer' },
-        row: { display: 'flex', gap: '10px', padding: '8px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' },
-        rowInput: { padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '12px' },
-        delBtn: { background: '#fef2f2', border: 'none', borderRadius: '4px', color: '#ef4444', width: '28px', height: '28px', cursor: 'pointer' },
-        upload: { border: '2px dashed #cbd5e1', borderRadius: '10px', padding: '40px', textAlign: 'center', cursor: 'pointer', background: '#f8fafc' },
-        log: { marginTop: '16px', padding: '14px', background: '#0f172a', borderRadius: '8px', fontFamily: 'monospace', fontSize: '11px', color: '#a5f3fc', maxHeight: '180px', overflow: 'auto' },
+        dropZone: { 
+          border: '2px dashed #cbd5e1', borderRadius: '8px', padding: '16px', textAlign: 'center', 
+          cursor: 'pointer', background: '#f8fafc', transition: 'all 0.2s',
+          minHeight: '80px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center'
+        },
+        dropZoneActive: { borderColor: '#d4a853', background: '#fef9e7' },
+        categoryCard: { 
+          background: 'white', borderRadius: '10px', marginBottom: '12px', 
+          border: '1px solid #e2e8f0', overflow: 'hidden'
+        },
+        categoryHeader: { 
+          padding: '14px 16px', borderLeft: '4px solid #d4a853',
+          background: 'linear-gradient(90deg, rgba(212,168,83,0.08), transparent)',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+        },
+        fileList: { padding: '0 16px 12px' },
+        fileItem: { 
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', marginTop: '8px', fontSize: '13px'
+        },
+        badge: { fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: '600' },
+        badgeGreen: { background: '#22c55e', color: 'white' },
+        badgeRed: { background: '#ef4444', color: 'white' },
+        badgeGray: { background: '#94a3b8', color: 'white' },
+        sectionTitle: { 
+          background: '#0f172a', color: 'white', padding: '10px 16px', 
+          fontWeight: '600', fontSize: '14px', letterSpacing: '0.5px', marginBottom: '12px', borderRadius: '6px'
+        },
+        log: { background: '#1e293b', color: '#94a3b8', padding: '12px', borderRadius: '6px', fontFamily: 'monospace', fontSize: '12px', maxHeight: '200px', overflow: 'auto' },
       };
 
+      // Category drop zone component
+      const CategoryDropZone = ({ category }) => {
+        const [isDragging, setIsDragging] = useState(false);
+        const files = categoryFiles[category.id] || [];
+        const categoryItems = items.filter(i => i.categoryId === category.id);
+        const isProcessing = files.some(f => processing[f.file.name]);
+        
+        const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+        const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+        const handleDrop = (e) => { setIsDragging(false); handleCategoryDrop(category.id, e); };
+        
+        return (
+          <div style={s.categoryCard}>
+            <div style={s.categoryHeader}>
+              <div>
+                <strong style={{ fontSize: '14px' }}>Item {category.id}. {category.name}</strong>
+                {categoryItems.length > 0 && (
+                  <span style={{ ...s.badge, ...s.badgeGreen, marginLeft: '8px' }}>{categoryItems.length} item{categoryItems.length > 1 ? 's' : ''}</span>
+                )}
+              </div>
+              <button 
+                style={{ ...s.btn, padding: '4px 10px', fontSize: '11px', background: '#64748b' }}
+                onClick={() => addManualItem(category.id)}
+              >+ Add Manual</button>
+            </div>
+            
+            <div style={{ padding: '12px 16px' }}>
+              <div 
+                style={{ ...s.dropZone, ...(isDragging ? s.dropZoneActive : {}) }}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById(`file-${category.id}`).click()}
+              >
+                <input 
+                  id={`file-${category.id}`}
+                  type="file" 
+                  multiple 
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  onChange={(e) => handleCategoryDrop(category.id, e)}
+                  style={{ display: 'none' }}
+                />
+                {isProcessing ? (
+                  <span style={{ color: '#64748b' }}>⏳ Processing...</span>
+                ) : (
+                  <>
+                    <span style={{ fontSize: '20px', marginBottom: '4px' }}>{isDragging ? '📥' : '📄'}</span>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>{category.uploadHint}</span>
+                  </>
+                )}
+              </div>
+              
+              {files.length > 0 && (
+                <div style={s.fileList}>
+                  {files.map((f, i) => (
+                    <div key={i} style={{ ...s.fileItem, background: f.status === 'error' ? '#fef2f2' : f.status === 'extracted' ? '#f0fdf4' : '#f8fafc' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {f.status === 'extracted' ? '✅' : f.status === 'error' ? '❌' : '📄'}
+                        <span>{f.file.name}</span>
+                      </span>
+                      <span style={{ ...s.badge, ...(f.status === 'extracted' ? s.badgeGreen : f.status === 'error' ? s.badgeRed : s.badgeGray) }}>
+                        {f.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {files.some(f => f.error) && (
+                <div style={{ padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', marginTop: '8px', fontSize: '12px', color: '#991b1b' }}>
+                  <strong>Errors:</strong>
+                  {files.filter(f => f.error).map((f, i) => (
+                    <div key={i}>• {f.file.name}: {f.error}</div>
+                  ))}
+                </div>
+              )}
+              
+              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '8px' }}>
+                Examples: {category.examples}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // Landing page
       if (currentView === 'landing') {
         return (
           <div style={s.landing}>
-            <div style={{ fontSize: '56px' }}>📎</div>
-            <h1 style={{ fontSize: '56px', fontWeight: '700', letterSpacing: '6px', marginTop: '16px' }}>ATTACHED</h1>
-            <p style={{ opacity: 0.8, marginBottom: '40px' }}>FL-142 Schedule of Assets & Debts Generator</p>
-            <div style={{ display: 'flex', gap: '20px', marginBottom: '40px' }}>
-              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
-                <div style={{ fontSize: '28px' }}>📄</div><p style={{ marginTop: '8px' }}>Upload Statements</p>
-              </div>
-              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
-                <div style={{ fontSize: '28px' }}>🤖</div><p style={{ marginTop: '8px' }}>AI Extraction</p>
-              </div>
-              <div style={{ padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', width: '180px' }}>
-                <div style={{ fontSize: '28px' }}>📋</div><p style={{ marginTop: '8px' }}>Court-Ready PDF</p>
-              </div>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📎</div>
+            <h1 style={{ fontFamily: 'Crimson Pro', fontSize: '42px', fontWeight: '600', letterSpacing: '4px', marginBottom: '8px' }}>ATTACHED</h1>
+            <p style={{ fontSize: '16px', opacity: 0.9, marginBottom: '40px' }}>FL-142 Schedule of Assets & Debts Generator</p>
+            <div style={{ display: 'flex', gap: '30px', marginBottom: '40px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {[['📁', 'Organize by Category'], ['🤖', 'AI Extraction'], ['📋', 'Court-Ready Output']].map(([icon, text]) => (
+                <div key={text} style={{ background: 'rgba(255,255,255,0.1)', padding: '24px', borderRadius: '12px', minWidth: '140px' }}>
+                  <div style={{ fontSize: '28px' }}>{icon}</div>
+                  <p style={{ marginTop: '8px', fontSize: '13px' }}>{text}</p>
+                </div>
+              ))}
             </div>
             <button style={s.btnGold} onClick={() => setCurrentView('app')}>Get Started →</button>
-            <p style={{ marginTop: '24px', fontSize: '11px', opacity: 0.5 }}>California Family Law • Patent Pending</p>
+            <p style={{ marginTop: '20px', fontSize: '12px', opacity: 0.6 }}>California Family Law • Patent Pending</p>
           </div>
         );
       }
 
+      // Main app
       return (
         <div style={{ minHeight: '100vh', background: '#faf9f7' }}>
           <nav style={s.nav}>
             <div style={s.navInner}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }} onClick={() => setCurrentView('landing')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'white' }}>
                 <span style={{ fontSize: '20px' }}>📎</span>
-                <span style={{ color: 'white', fontWeight: '700', letterSpacing: '2px' }}>ATTACHED</span>
+                <span style={{ fontFamily: 'Crimson Pro', fontWeight: '600', letterSpacing: '2px' }}>ATTACHED</span>
               </div>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {['Case', 'Docs', 'Assets', 'Debts', 'Generate'].map((l, i) => (
-                  <button key={i} onClick={() => setStep(i+1)} style={{
-                    padding: '6px 12px', borderRadius: '16px', border: 'none', fontSize: '12px', cursor: 'pointer',
-                    background: step === i+1 ? '#d4a853' : step > i+1 ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)',
-                    color: step === i+1 ? '#0f172a' : step > i+1 ? '#22c55e' : 'rgba(255,255,255,0.6)',
-                  }}>{step > i+1 ? '✓' : l}</button>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {['Case Info', 'Upload', 'Review', 'Generate'].map((label, i) => (
+                  <button 
+                    key={label}
+                    onClick={() => setStep(i + 1)}
+                    style={{ 
+                      padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer',
+                      background: step === i + 1 ? '#d4a853' : 'transparent',
+                      color: step === i + 1 ? '#0f172a' : 'white',
+                      fontWeight: step === i + 1 ? '600' : '400',
+                      fontSize: '13px'
+                    }}
+                  >{i + 1}. {label}</button>
                 ))}
               </div>
             </div>
           </nav>
 
           <main style={s.main}>
-            {/* Summary */}
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', padding: '12px', background: 'white', borderRadius: '10px', marginBottom: '20px' }}>
-              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Assets</small><div style={{ fontWeight: '700', fontSize: '18px' }}>${totalAssetsFMV.toLocaleString()}</div></div>
-              <div style={{ width: '1px', background: '#e2e8f0' }} />
-              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Debts</small><div style={{ fontWeight: '700', fontSize: '18px' }}>${totalDebts.toLocaleString()}</div></div>
-              <div style={{ width: '1px', background: '#e2e8f0' }} />
-              <div style={{ textAlign: 'center' }}><small style={{ color: '#64748b' }}>Net</small><div style={{ fontWeight: '700', fontSize: '18px', color: netWorth < 0 ? '#ef4444' : '#22c55e' }}>${netWorth.toLocaleString()}</div></div>
-            </div>
-
-            {/* Step 1 */}
+            {/* Step 1: Case Info */}
             {step === 1 && (
               <div style={s.card}>
-                <h2 style={{ marginBottom: '16px' }}>Case Information</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                  <div><label style={s.label}>Petitioner Name</label><input style={s.input} value={caseInfo.petitioner} onChange={e => setCaseInfo({...caseInfo, petitioner: e.target.value})} placeholder="Full legal name" /></div>
-                  <div><label style={s.label}>Respondent Name</label><input style={s.input} value={caseInfo.respondent} onChange={e => setCaseInfo({...caseInfo, respondent: e.target.value})} placeholder="Full legal name" /></div>
-                  <div><label style={s.label}>Case Number</label><input style={s.input} value={caseInfo.caseNumber} onChange={e => setCaseInfo({...caseInfo, caseNumber: e.target.value})} placeholder="e.g., BFL-00001" /></div>
-                  <div><label style={s.label}>County</label><input style={s.input} value={caseInfo.county} onChange={e => setCaseInfo({...caseInfo, county: e.target.value})} placeholder="e.g., Kern" /></div>
-                  <div><label style={s.label}>Filing Party</label>
+                <h2 style={{ marginBottom: '20px' }}>Case Information</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div><label style={s.label}>Petitioner Name</label><input style={s.input} value={caseInfo.petitioner} onChange={e => setCaseInfo({...caseInfo, petitioner: e.target.value})} /></div>
+                  <div><label style={s.label}>Respondent Name</label><input style={s.input} value={caseInfo.respondent} onChange={e => setCaseInfo({...caseInfo, respondent: e.target.value})} /></div>
+                  <div><label style={s.label}>Case Number</label><input style={s.input} value={caseInfo.caseNumber} onChange={e => setCaseInfo({...caseInfo, caseNumber: e.target.value})} /></div>
+                  <div><label style={s.label}>County</label><input style={s.input} value={caseInfo.county} onChange={e => setCaseInfo({...caseInfo, county: e.target.value})} /></div>
+                  <div>
+                    <label style={s.label}>Filing Party</label>
                     <select style={s.input} value={caseInfo.filingParty} onChange={e => setCaseInfo({...caseInfo, filingParty: e.target.value})}>
                       <option value="petitioner">Petitioner</option>
                       <option value="respondent">Respondent</option>
                     </select>
                   </div>
-                  <div><label style={s.label}>Phone Number</label><input style={s.input} value={caseInfo.attorneyPhone} onChange={e => setCaseInfo({...caseInfo, attorneyPhone: e.target.value})} placeholder="(xxx) xxx-xxxx" /></div>
                 </div>
-                <div style={{ marginTop: '20px', textAlign: 'right' }}><button style={s.btn} onClick={() => setStep(2)}>Continue →</button></div>
+                <div style={{ marginTop: '24px', textAlign: 'right' }}>
+                  <button style={s.btn} onClick={() => setStep(2)}>Continue to Upload →</button>
+                </div>
               </div>
             )}
 
-            {/* Step 2 */}
+            {/* Step 2: Category-based Upload */}
             {step === 2 && (
-              <div style={s.card}>
-                <h2 style={{ marginBottom: '16px' }}>Upload Documents</h2>
-                <label 
-                  style={{ ...s.upload, borderColor: isDragging ? '#d4a853' : '#cbd5e1', background: isDragging ? '#fef9e7' : '#f8fafc' }}
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                >
-                  <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg" onChange={handleFileUpload} style={{ display: 'none' }} />
-                  <div style={{ fontSize: '40px' }}>{isDragging ? '📥' : '📁'}</div>
-                  <p>{isDragging ? 'Drop files here!' : 'Drop files or click to upload'}</p>
-                  <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px' }}>Bank statements, brokerage statements, credit card statements</p>
-                </label>
-                {uploadedFiles.length > 0 && (
-                  <div style={{ marginTop: '16px' }}>
-                    {uploadedFiles.map((f, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', background: f.status === 'extracted' ? '#f0fdf4' : '#f8fafc', borderRadius: '6px', marginBottom: '6px' }}>
-                        <span>{f.status === 'extracted' ? '✅' : f.status === 'error' ? '❌' : '📄'} {f.file.name}</span>
-                        <span style={{ fontSize: '11px', padding: '2px 8px', background: f.status === 'extracted' ? '#22c55e' : '#64748b', color: 'white', borderRadius: '10px' }}>{f.status}</span>
+              <div>
+                <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h2>Upload Documents by Category</h2>
+                    <p style={{ color: '#64748b', fontSize: '14px', marginTop: '4px' }}>Drop files into the appropriate category. AI will extract details automatically.</p>
+                  </div>
+                  <button style={s.btnOutline} onClick={() => setStep(1)}>← Back</button>
+                </div>
+                
+                {/* Assets */}
+                <div style={s.sectionTitle}>ASSETS (Items 1-16)</div>
+                {CATEGORIES.filter(c => c.section === 'ASSETS').map(cat => (
+                  <CategoryDropZone key={cat.id} category={cat} />
+                ))}
+                
+                {/* Debts */}
+                <div style={{ ...s.sectionTitle, marginTop: '24px' }}>DEBTS (Items 19-24)</div>
+                {CATEGORIES.filter(c => c.section === 'DEBTS').map(cat => (
+                  <CategoryDropZone key={cat.id} category={cat} />
+                ))}
+                
+                {errors.length > 0 && (
+                  <div style={{ ...s.card, background: '#fef2f2', marginTop: '20px' }}>
+                    <h3 style={{ color: '#991b1b', marginBottom: '12px' }}>⚠️ Review These Items ({errors.length})</h3>
+                    {errors.map((err, i) => (
+                      <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #fecaca', fontSize: '13px' }}>
+                        <strong>{err.file}</strong> ({err.category})<br />
+                        <span style={{ color: '#991b1b' }}>{err.reason}</span>
                       </div>
                     ))}
-                    {uploadedFiles.some(f => f.status === 'pending') && (
-                      <button style={{ ...s.btn, width: '100%', marginTop: '10px' }} onClick={extractFromDocuments} disabled={extracting}>
-                        {extracting ? '⏳ Extracting...' : '🔍 Extract with AI'}
-                      </button>
-                    )}
-                    {extractionLog.length > 0 && <div style={s.log}>{extractionLog.map((l, i) => <div key={i}>{l}</div>)}</div>}
                   </div>
                 )}
-                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
-                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(1)}>← Back</button>
-                  <button style={s.btn} onClick={() => setStep(3)}>Continue →</button>
+                
+                <div style={{ marginTop: '24px', textAlign: 'right' }}>
+                  <button style={s.btn} onClick={() => setStep(3)}>Continue to Review →</button>
                 </div>
               </div>
             )}
 
-            {/* Step 3 - Assets */}
+            {/* Step 3: Review */}
             {step === 3 && (
               <div>
-                <h2 style={{ marginBottom: '16px' }}>Assets</h2>
-                {ASSET_CATEGORIES.map(cat => {
-                  const items = assets.filter(a => a.categoryId === cat.id);
-                  return (
-                    <div key={cat.id} style={s.catCard}>
-                      <div style={s.catHeader}>
-                        <span><strong style={{ color: '#d4a853' }}>{cat.id}.</strong> {cat.name} {items.length > 0 && <span style={{ background: '#0f172a', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', marginLeft: '8px' }}>{items.length}</span>}</span>
-                        <button style={{ padding: '4px 10px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }} onClick={() => addAsset(cat.id)}>+ Add</button>
+                <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h2>Review & Edit</h2>
+                    <p style={{ color: '#64748b', fontSize: '14px', marginTop: '4px' }}>{items.length} items extracted. Edit as needed.</p>
+                  </div>
+                  <button style={s.btnOutline} onClick={() => setStep(2)}>← Back</button>
+                </div>
+                
+                {getCategoriesWithContent().length === 0 ? (
+                  <div style={{ ...s.card, textAlign: 'center', padding: '40px' }}>
+                    <p style={{ color: '#64748b' }}>No items yet. Go back to upload documents.</p>
+                  </div>
+                ) : (
+                  <>
+                    {getCategoriesWithContent().map(cat => (
+                      <div key={cat.id} style={s.card}>
+                        <h3 style={{ marginBottom: '12px', fontSize: '15px' }}>Item {cat.id}. {cat.name}</h3>
+                        {items.filter(i => i.categoryId === cat.id).map(item => (
+                          <div key={item.id} style={{ padding: '12px', background: '#f8fafc', borderRadius: '6px', marginBottom: '8px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'center' }}>
+                              <input 
+                                style={{ ...s.input, fontSize: '13px' }}
+                                value={item.description}
+                                onChange={e => updateItem(item.id, 'description', e.target.value)}
+                                placeholder="Description"
+                              />
+                              <input 
+                                style={{ ...s.input, fontSize: '13px' }}
+                                type="number"
+                                value={item.fairMarketValue || ''}
+                                onChange={e => updateItem(item.id, 'fairMarketValue', parseFloat(e.target.value) || 0)}
+                                placeholder="FMV"
+                              />
+                              <input 
+                                style={{ ...s.input, fontSize: '13px' }}
+                                type="number"
+                                value={item.amountOwed || item.totalOwing || ''}
+                                onChange={e => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  updateItem(item.id, cat.section === 'DEBTS' ? 'totalOwing' : 'amountOwed', val);
+                                }}
+                                placeholder={cat.section === 'DEBTS' ? 'Owed' : 'Amt Owed'}
+                              />
+                              <select 
+                                style={{ ...s.input, fontSize: '13px' }}
+                                value={item.separateProperty || ''}
+                                onChange={e => updateItem(item.id, 'separateProperty', e.target.value)}
+                              >
+                                <option value="">S/P?</option>
+                                <option value="CP">CP</option>
+                                <option value="SP-P">SP-P</option>
+                                <option value="SP-R">SP-R</option>
+                              </select>
+                              <button 
+                                onClick={() => deleteItem(item.id)}
+                                style={{ background: '#fef2f2', border: 'none', borderRadius: '4px', color: '#ef4444', width: '32px', height: '32px', cursor: 'pointer' }}
+                              >✕</button>
+                            </div>
+                            {item.confidence && item.confidence !== 'high' && (
+                              <div style={{ marginTop: '6px', fontSize: '11px', color: '#f59e0b' }}>
+                                ⚠️ {item.confidence} confidence: {item.confidenceReason}
+                              </div>
+                            )}
+                            {item.sourceFile && (
+                              <div style={{ marginTop: '4px', fontSize: '11px', color: '#94a3b8' }}>
+                                Source: {item.sourceFile}
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                      {items.length > 0 && items.map(a => (
-                        <div key={a.id} style={s.row}>
-                          <input style={{ ...s.rowInput, flex: 2 }} value={a.description} onChange={e => updateAsset(a.id, 'description', e.target.value)} placeholder={cat.hint} />
-                          <select style={{ ...s.rowInput, width: '60px' }} value={a.separateProperty} onChange={e => updateAsset(a.id, 'separateProperty', e.target.value)}><option value="">—</option><option value="P">P</option><option value="R">R</option></select>
-                          <input type="number" style={{ ...s.rowInput, width: '100px' }} value={a.fairMarketValue || ''} onChange={e => updateAsset(a.id, 'fairMarketValue', e.target.value)} placeholder="FMV" />
-                          <input type="number" style={{ ...s.rowInput, width: '100px' }} value={a.amountOwed || ''} onChange={e => updateAsset(a.id, 'amountOwed', e.target.value)} placeholder="Owed" />
-                          <button style={s.delBtn} onClick={() => deleteAsset(a.id)}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
-                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(2)}>← Back</button>
-                  <button style={s.btn} onClick={() => setStep(4)}>Continue →</button>
+                    ))}
+                  </>
+                )}
+                
+                <div style={{ marginTop: '24px', textAlign: 'right' }}>
+                  <button style={s.btn} onClick={() => setStep(4)}>Continue to Generate →</button>
                 </div>
               </div>
             )}
 
-            {/* Step 4 - Debts */}
+            {/* Step 4: Generate */}
             {step === 4 && (
               <div>
-                <h2 style={{ marginBottom: '16px' }}>Debts</h2>
-                {DEBT_CATEGORIES.map(cat => {
-                  const items = debts.filter(d => d.categoryId === cat.id);
-                  return (
-                    <div key={cat.id} style={s.catCard}>
-                      <div style={s.catHeader}>
-                        <span><strong style={{ color: '#d4a853' }}>{cat.id}.</strong> {cat.name} {items.length > 0 && <span style={{ background: '#0f172a', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', marginLeft: '8px' }}>{items.length}</span>}</span>
-                        <button style={{ padding: '4px 10px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }} onClick={() => addDebt(cat.id)}>+ Add</button>
-                      </div>
-                      {items.length > 0 && items.map(d => (
-                        <div key={d.id} style={s.row}>
-                          <input style={{ ...s.rowInput, flex: 2 }} value={d.description} onChange={e => updateDebt(d.id, 'description', e.target.value)} placeholder={cat.hint} />
-                          <select style={{ ...s.rowInput, width: '60px' }} value={d.separateProperty} onChange={e => updateDebt(d.id, 'separateProperty', e.target.value)}><option value="">—</option><option value="P">P</option><option value="R">R</option></select>
-                          <input type="number" style={{ ...s.rowInput, width: '120px' }} value={d.totalOwing || ''} onChange={e => updateDebt(d.id, 'totalOwing', e.target.value)} placeholder="Total Owing" />
-                          <button style={s.delBtn} onClick={() => deleteDebt(d.id)}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between' }}>
-                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(3)}>← Back</button>
-                  <button style={s.btn} onClick={() => setStep(5)}>Continue →</button>
+                <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2>Generate Output</h2>
+                  <button style={s.btnOutline} onClick={() => setStep(3)}>← Back</button>
                 </div>
-              </div>
-            )}
-
-            {/* Step 5 - Generate */}
-            {step === 5 && (
-              <div>
-                <h2 style={{ marginBottom: '16px' }}>Generate Attachment</h2>
+                
                 <div style={s.card}>
-                  <div style={{ fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.6' }}>
-                    <div><strong>Case Number:</strong> {caseInfo.caseNumber || 'TBD'}</div>
+                  <div style={{ fontFamily: 'monospace', fontSize: '13px', lineHeight: '1.8' }}>
+                    <div><strong>Case:</strong> {caseInfo.petitioner || '—'} vs. {caseInfo.respondent || '—'}</div>
+                    <div><strong>Case Number:</strong> {caseInfo.caseNumber || '—'}</div>
                     <div><strong>County:</strong> {caseInfo.county || '—'}</div>
-                    <div><strong>Petitioner:</strong> {caseInfo.petitioner || '—'}</div>
-                    <div><strong>Respondent:</strong> {caseInfo.respondent || '—'}</div>
                     <div><strong>Filing Party:</strong> {caseInfo.filingParty === 'petitioner' ? 'Petitioner' : 'Respondent'}</div>
-                    <div><strong>Date:</strong> {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
-                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Total Assets</small><div style={{ fontSize: '24px', fontWeight: '700' }}>${totalAssetsFMV.toLocaleString()}</div></div>
-                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Total Debts</small><div style={{ fontSize: '24px', fontWeight: '700' }}>${totalDebts.toLocaleString()}</div></div>
-                  <div style={{ ...s.card, textAlign: 'center' }}><small style={{ color: '#64748b' }}>Net Worth</small><div style={{ fontSize: '24px', fontWeight: '700', color: netWorth < 0 ? '#ef4444' : '#22c55e' }}>${netWorth.toLocaleString()}</div></div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                  <div style={{ ...s.card, textAlign: 'center' }}>
+                    <small style={{ color: '#64748b' }}>Total Assets (FMV)</small>
+                    <div style={{ fontSize: '24px', fontWeight: '700' }}>${totalAssetsFMV.toLocaleString()}</div>
+                  </div>
+                  <div style={{ ...s.card, textAlign: 'center' }}>
+                    <small style={{ color: '#64748b' }}>Total Debts</small>
+                    <div style={{ fontSize: '24px', fontWeight: '700' }}>${totalDebts.toLocaleString()}</div>
+                  </div>
+                  <div style={{ ...s.card, textAlign: 'center' }}>
+                    <small style={{ color: '#64748b' }}>Net Worth</small>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: netWorth < 0 ? '#ef4444' : '#22c55e' }}>${netWorth.toLocaleString()}</div>
+                  </div>
                 </div>
+                
                 <div style={{ ...s.card, background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: 'white', textAlign: 'center' }}>
-                  <h3>Ready to Generate</h3>
-                  <p style={{ opacity: 0.8, margin: '10px 0 20px' }}>Choose your output format</p>
+                  <h3 style={{ marginBottom: '8px' }}>Choose Output Format</h3>
+                  <p style={{ opacity: 0.7, fontSize: '13px', marginBottom: '20px' }}>All options include category dividers</p>
                   <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    <button style={s.btnGold} onClick={generateAttachment}>📄 Print Schedule</button>
-                    <button style={{ ...s.btnGold, background: '#22c55e' }} onClick={generateZIP}>📦 Download ZIP</button>
+                    <button style={s.btnGold} onClick={generatePrintSchedule} disabled={generating}>📄 Print Schedule</button>
+                    <button style={s.btnGreen} onClick={generateMergedPDF} disabled={generating}>📑 Merged PDF</button>
+                    <button style={{ ...s.btnGold, background: '#3b82f6' }} onClick={generateZIP} disabled={generating}>📦 ZIP Package</button>
                   </div>
-                  <p style={{ opacity: 0.6, fontSize: '12px', marginTop: '12px' }}>ZIP includes dividers + original statements organized by category</p>
+                  <p style={{ opacity: 0.5, fontSize: '11px', marginTop: '16px' }}>
+                    Merged PDF: Single file with dividers + statements in order<br />
+                    ZIP: Folders organized by category
+                  </p>
                 </div>
-                {extractionLog.length > 0 && (
+                
+                {genLog.length > 0 && (
                   <div style={{ ...s.card, marginTop: '16px' }}>
-                    <div style={s.log}>{extractionLog.map((l, i) => <div key={i}>{l}</div>)}</div>
+                    <div style={s.log}>
+                      {genLog.map((line, i) => <div key={i}>{line}</div>)}
+                    </div>
                   </div>
                 )}
-                <div style={{ marginTop: '20px' }}>
-                  <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(4)}>← Back</button>
-                </div>
               </div>
             )}
           </main>
