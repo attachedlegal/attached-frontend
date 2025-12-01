@@ -8,6 +8,8 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'DM Sans', sans-serif; background: #faf9f7; min-height: 100vh; }
@@ -470,6 +472,111 @@ ${groupedDebts.map(cat => `
         setTimeout(() => win.print(), 500);
       };
 
+      // Divider filename mapping
+      const DIVIDER_FILES = {
+        1: '01_Real_Estate.pdf',
+        2: '02_Household_Furniture_Furnishings_Appliances.pdf',
+        3: '03_Jewelry_Antiques_Art_Coin_Collections_etc..pdf',
+        4: '04_Vehicles_Boats_Trailers.pdf',
+        5: '05_Savings_Accounts.pdf',
+        6: '06_Checking_Accounts.pdf',
+        7: '07_Credit_Union_Other_Deposit_Accounts.pdf',
+        8: '08_Cash.pdf',
+        9: '09_Tax_Refund.pdf',
+        10: '10_Life_Insurance_with_Cash_Surrender_or_Loan_Value.pdf',
+        11: '11_Stocks_Bonds_Secured_Notes_Mutual_Funds.pdf',
+        12: '12_Retirement_and_Pensions.pdf',
+        13: '13_Profit-Sharing_Annuities_IRAs_Deferred_Compensation.pdf',
+        14: '14_Accounts_Receivable_and_Unsecured_Notes.pdf',
+        15: '15_Partnerships_and_Other_Business_Interests.pdf',
+        16: '16_Other_Assets.pdf',
+        19: '19_Student_Loans.pdf',
+        20: '20_Taxes.pdf',
+        21: '21_Support_Arrearages.pdf',
+        22: '22_Loans_Unsecured.pdf',
+        23: '23_Credit_Cards.pdf',
+        24: '24_Other_Debts.pdf',
+      };
+
+      const generateZIP = async () => {
+        setExtractionLog(['📦 Creating ZIP package...']);
+        
+        try {
+          const zip = new JSZip();
+          const baseUrl = window.location.hostname === 'localhost' 
+            ? '' 
+            : 'https://attached-frontend.vercel.app';
+          
+          // Get all categories that have items
+          const usedAssetCategories = [...new Set(assets.map(a => a.categoryId))];
+          const usedDebtCategories = [...new Set(debts.map(d => d.categoryId))];
+          const allUsedCategories = [...usedAssetCategories, ...usedDebtCategories].sort((a, b) => a - b);
+          
+          setExtractionLog(prev => [...prev, `📋 Found ${allUsedCategories.length} categories with items`]);
+          
+          // Create folder for each used category
+          for (const catId of allUsedCategories) {
+            const category = [...ASSET_CATEGORIES, ...DEBT_CATEGORIES].find(c => c.id === catId);
+            if (!category) continue;
+            
+            const folderName = `${String(catId).padStart(2, '0')}_${category.name.replace(/[^a-zA-Z0-9 ]/g, '').replace(/ /g, '_').substring(0, 40)}`;
+            const folder = zip.folder(folderName);
+            
+            // Add divider PDF
+            const dividerFile = DIVIDER_FILES[catId];
+            if (dividerFile) {
+              try {
+                setExtractionLog(prev => [...prev, `📄 Fetching divider for Item ${catId}...`]);
+                const dividerUrl = `${baseUrl}/${dividerFile}`;
+                const response = await fetch(dividerUrl);
+                if (response.ok) {
+                  const blob = await response.blob();
+                  folder.file(`00_DIVIDER.pdf`, blob);
+                }
+              } catch (e) {
+                console.log(`Could not fetch divider for category ${catId}:`, e);
+              }
+            }
+            
+            // Find items in this category
+            const categoryItems = [
+              ...assets.filter(a => a.categoryId === catId),
+              ...debts.filter(d => d.categoryId === catId)
+            ];
+            
+            // Add source files for items in this category
+            let fileIndex = 1;
+            for (const item of categoryItems) {
+              if (item.sourceFile) {
+                const uploadedFile = uploadedFiles.find(f => f.file.name === item.sourceFile);
+                if (uploadedFile) {
+                  const ext = uploadedFile.file.name.split('.').pop();
+                  const safeName = uploadedFile.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                  folder.file(`${String(fileIndex).padStart(2, '0')}_${safeName}`, uploadedFile.file);
+                  fileIndex++;
+                }
+              }
+            }
+            
+            setExtractionLog(prev => [...prev, `✅ ${folderName}: ${fileIndex - 1} documents`]);
+          }
+          
+          // Generate the ZIP
+          setExtractionLog(prev => [...prev, '🗜️ Compressing files...']);
+          const content = await zip.generateAsync({ type: 'blob' });
+          
+          // Download
+          const fileName = `FL142_Attachment_${caseInfo.caseNumber || 'Schedule'}_${new Date().toISOString().split('T')[0]}.zip`;
+          saveAs(content, fileName);
+          
+          setExtractionLog(prev => [...prev, `✅ Downloaded: ${fileName}`]);
+          
+        } catch (error) {
+          setExtractionLog(prev => [...prev, `❌ Error: ${error.message}`]);
+          console.error('ZIP generation error:', error);
+        }
+      };
+
       // Styles
       const s = {
         landing: { minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a, #1e293b)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white', textAlign: 'center', padding: '40px' },
@@ -684,9 +791,18 @@ ${groupedDebts.map(cat => `
                 </div>
                 <div style={{ ...s.card, background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: 'white', textAlign: 'center' }}>
                   <h3>Ready to Generate</h3>
-                  <p style={{ opacity: 0.8, margin: '10px 0 20px' }}>Opens in new window for print/PDF</p>
-                  <button style={s.btnGold} onClick={generateAttachment}>📄 Generate FL-142 Attachment</button>
+                  <p style={{ opacity: 0.8, margin: '10px 0 20px' }}>Choose your output format</p>
+                  <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button style={s.btnGold} onClick={generateAttachment}>📄 Print Schedule</button>
+                    <button style={{ ...s.btnGold, background: '#22c55e' }} onClick={generateZIP}>📦 Download ZIP</button>
+                  </div>
+                  <p style={{ opacity: 0.6, fontSize: '12px', marginTop: '12px' }}>ZIP includes dividers + original statements organized by category</p>
                 </div>
+                {extractionLog.length > 0 && (
+                  <div style={{ ...s.card, marginTop: '16px' }}>
+                    <div style={s.log}>{extractionLog.map((l, i) => <div key={i}>{l}</div>)}</div>
+                  </div>
+                )}
                 <div style={{ marginTop: '20px' }}>
                   <button style={{ ...s.btn, background: 'transparent', color: '#0f172a', border: '2px solid #0f172a' }} onClick={() => setStep(4)}>← Back</button>
                 </div>
